@@ -136,7 +136,8 @@ breaking="$(jq --arg b "$DW_BREAKING_LABEL" 'any(.[]; ascii_downcase == $b)' <<<
 has_bang() { jq -e --arg s "$1" '$s | test("^[^:]*!:")' <<<null >/dev/null; }
 # スカッシュマージでは PR の本文がコミットの本文になるので、移行のしかたを本文に残す
 # 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
-has_breaking_note() { printf '%s' "$1" | jq -Rse 'test("(^|\n)BREAKING[ -]CHANGE: *\\S")' >/dev/null; }
+# shellcheck disable=SC2016 # jq の変数を bash に展開させない
+has_breaking_note() { printf '%s' "$1" | dw_jq_text -e '$dw_in | test("(^|\n)BREAKING[ -]CHANGE: *\\S")' >/dev/null; }
 
 # --- Issue のチェックリスト -----------------------------------------------------
 # 本文を md_scan（lib/common.sh）で読み、チェックリストの項目（items。上から順に {line（0 からの行番号）, checked, text}）と
@@ -207,9 +208,10 @@ if [ -z "$pr_number" ] && $breaking; then
 fi
 keyword="$(jq -r '.pr.close_keyword' <<<"$config")"
 # 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
-body="$(printf '%s' "$body" | jq -Rrs --arg k "$keyword" --arg n "$issue" '
+# shellcheck disable=SC2016 # jq の変数を bash に展開させない
+body="$(printf '%s' "$body" | dw_jq_text -r --arg k "$keyword" --arg n "$issue" '
   # テンプレートの番号が空のままの行（Closes #）を消し、末尾の空行を落とす
-  (split("\n") | map(select(test("^\\s*" + $k + "\\s+#\\s*$"; "i") | not)) | join("\n")
+  ($dw_in | split("\n") | map(select(test("^\\s*" + $k + "\\s+#\\s*$"; "i") | not)) | join("\n")
     | sub("\\s+$"; "")) as $body
   | if $body | test("\\b" + $k + "\\s+#" + $n + "\\b"; "i") then $body
     elif $body == "" then "\($k) #\($n)"

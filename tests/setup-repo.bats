@@ -700,3 +700,14 @@ workflow() {
   assert_success
   assert_equal "$(body POST | jq -c .conditions.ref_name.include)" '["refs/heads/main"]'
 }
+
+@test "--required-check の名前に絵文字があっても（4096 バイトを超えても）壊さずに、ルールセットとその結果に出す" {
+  # 標準入力の jq -R -s は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す
+  setup_fake_gh
+  name="$(emoji_text 1500)"
+  run_setup --required-check "$name" --required-check lint-result
+  assert_success
+  rule="$(body POST | jq -c '.rules[] | select(.type == "required_status_checks")')"
+  assert_equal "$(jq -r '.parameters.required_status_checks[].context' <<<"$rule" | head -n 1)" "$name"
+  assert_equal "$(jq -r '.ruleset.required_checks[0]' <<<"$json")" "$name"
+}

@@ -621,3 +621,162 @@ SH
   assert_success
   assert_output $'warn: 読めません: gh: HTTP 502\nwarn: 別の種類\nwarn: 新しい種類: x'
 }
+
+# 1行が約 4096 バイトを超え、その区切りに絵文字がかかる入力を、標準入力の jq -R・-R -s で読むと、絵文字が壊れる（jq の不具合）。
+# 文を jq に渡すには、dw_jq_text・dw_json_lines・dw_json_lines_nonempty（--rawfile 経由）を使う
+@test "dw_json_lines_nonempty は、空行を除いた行の配列にし、フィルターと jq の引数を受け取り、4096 バイトの区切りに絵文字がかかっても壊さない" {
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  nonempty() { run "${TEST_BASH:-bash}" -c '. "$1"; shift; printf "$1" | { shift; dw_json_lines_nonempty "$@"; }' _ "$SCRIPTS/lib/common.sh" "$@"; }
+  nonempty 'a\n\nb\n'
+  assert_output '["a","b"]'
+  nonempty ''
+  assert_output '[]'
+  nonempty 'b\na\nb\n' 'unique'
+  assert_output '["a","b"]'
+  # shellcheck disable=SC2016 # jq の変数は bash に展開させない
+  nonempty 'a\n' '. + $e | map(select(. != "")) | unique' --argjson e '["z",""]'
+  assert_output '["a","z"]'
+  for pad in 4092 4093 4094; do
+    text="$(head -c "$pad" /dev/zero | tr '\0' a)😀tail"
+    # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+    run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s\n\n%s\n" "$2" "$2" | dw_json_lines_nonempty' _ "$SCRIPTS/lib/common.sh" "$text"
+    assert_success
+    assert_equal "$(jq -c --arg t "$text" '. == [$t, $t]' <<<"$output")" true
+  done
+}
+
+@test "dw_json_lines は、jq -R . | jq -sc . と同じ行の配列にする（最後の改行の後ろの空は数えず、空行は数える）" {
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  run_lines() { run "${TEST_BASH:-bash}" -c '. "$1"; printf "$2" | dw_json_lines' _ "$SCRIPTS/lib/common.sh" "$1"; }
+  run_lines ''
+  assert_output '[]'
+  run_lines 'a'
+  assert_output '["a"]'
+  run_lines 'a\n'
+  assert_output '["a"]'
+  run_lines 'a\n\nb\n'
+  assert_output '["a","","b"]'
+  run_lines '\n'
+  assert_output '[""]'
+  text="$(head -c 4094 /dev/zero | tr '\0' a)😀"
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  run "${TEST_BASH:-bash}" -c '. "$1"; printf "%s\n%s\n" "$2" "$2" | dw_json_lines' _ "$SCRIPTS/lib/common.sh" "$text"
+  assert_success
+  assert_equal "$(jq -c --arg t "$text" '. == [$t, $t]' <<<"$output")" true
+}
+
+# 標準入力のスクリプトから、jq に -R（-Rs・-sR・--raw-input など）を渡している行を出す。
+# 行末の \ で続く行は1行につなぎ、コメントの行（# で始まる行）は除く。jq の語ごとに、後ろの引数を1文字ずつ読み、
+# 引用符の中の文字列と $(...) の中は「x」に置き換えて（引数の中身に惑わされない）、引用符の外の | ; & ) < > まで（コマンドの終わり）を、
+# フラグを探す対象にする。引数に $(...) や引用符を挟んでも拾う。$(...) の中の jq は、その中で別に探す。
+# macOS の awk は、日本語の入った行を文字として読もうとして失敗する（towc: multibyte conversion failure）ので、バイト列として読ませる
+raw_jq_hits() {
+  LC_ALL=C awk '
+    function flag(rest,   i, c, q, depth, flat, n, d) {
+      flat = ""; q = ""; depth = 0
+      n = length(rest)
+      for (i = 1; i <= n; i++) {
+        c = substr(rest, i, 1)
+        if (depth > 0) {
+          if (c == "(") depth++
+          else if (c == ")") depth--
+          continue
+        }
+        if (q == "\047") { if (c == "\047") q = ""; continue }
+        if (q == "\"") {
+          if (c == "\\") { i++; continue }
+          if (c == "\"") { q = ""; continue }
+          if (c == "$" && substr(rest, i + 1, 1) == "(") { depth = 1; i++; continue }
+          continue
+        }
+        if (c == "\047" || c == "\"") { q = c; flat = flat "x"; continue }
+        if (c == "$" && substr(rest, i + 1, 1) == "(") { depth = 1; i++; flat = flat "x"; continue }
+        if (c ~ /[|;&)<>]/) break
+        flat = flat c
+      }
+      return (flat ~ /(^| )-[A-Za-z]*R[A-Za-z]*( |$)/ || flat ~ /(^| )--raw-input( |$)/)
+    }
+    function scan(line,   pos, rest, prev, found) {
+      found = 0
+      rest = line
+      pos = 0
+      while (match(rest, /jq( |$)/)) {
+        prev = (RSTART + pos > 1) ? substr(line, RSTART + pos - 1, 1) : " "
+        if (prev !~ /[A-Za-z0-9_.\/-]/ && flag(substr(rest, RSTART + 2))) found = 1
+        pos += RSTART + 1
+        rest = substr(rest, RSTART + 2)
+      }
+      return found
+    }
+    { if (sub(/\\$/, "")) { buf = buf $0; next } line = buf $0; buf = "" }
+    line !~ /^[[:space:]]*#/ && scan(line) { print line }
+  '
+}
+
+@test "raw_jq_hits は、jq -R の書き方（引数を挟む・\$(...) や引用符を挟む・継続行にある）を拾い、コメントや jq でないコマンドは拾わない" {
+  hit() { assert_equal "$(printf '%s\n' "$1" | raw_jq_hits)" "$1"; }
+  hit "x=\$(printf a | jq -R -s .)"
+  hit "jq -Rs ."
+  hit "jq -sR ."
+  hit "jq --raw-input ."
+  hit "jq -r --arg x \"\$y\" -R '.'"
+  hit "jq --arg a b -Rs '.'"
+  hit "jq -c --argjson e \"\$extra\" -R -s 'split(1)'"
+  hit "jq --arg x \"\$(foo)\" -Rs ."
+  hit "jq --argjson c \"\$(jq -c .a <<<\"\$x\")\" -R ."
+  hit "out=\"\$(foo | jq -r --arg b '|;)' -R .)\""
+  hit "jq -r --arg x \$(foo) -Rs . <<<\"\$y\""
+  hit "echo \"\$(jq -Rs . <f)\" && jq . g"
+  assert_equal "$(printf '%s\n' $'jq -r \\' $'  -R "$p"' | raw_jq_hits)" $'jq -r   -R "$p"'
+  assert_equal "$(printf '%s\n' $'jq -r --arg a b \\' $'  --arg c d \\' $'  -Rs "$p"' | raw_jq_hits | grep -c -- -Rs)" 1
+  # shellcheck disable=SC2016 # 引数は、検査する行の文字列で、展開しない
+  assert_equal "$(printf '%s\n' '# jq -R は使わない' '  # jq -Rs' 'jq -r .a' 'sort -R' 'jq .a | sort -R' 'jq --arg r "x" .a' 'ls -R | jq .' 'jq -r --arg x "$(foo -R)" .a' "jq -r '-R' .a" 'myjq -R .' 'jq -n --rawfile s /dev/stdin "$s"' | raw_jq_hits)" ""
+}
+
+@test "scripts/ と hooks/ に、標準入力の jq -R・-R -s（--raw-input）が残っていない（絵文字が壊れるため。dw_jq_text を使う）" {
+  hits=""
+  while IFS= read -r f; do
+    h="$(raw_jq_hits <"$f")"
+    [ -z "$h" ] || hits="${hits}${f}: ${h}"$'\n'
+  done < <(find "$SCRIPTS" "$SCRIPTS/../hooks" -type f -name '*.sh')
+  assert_equal "$hits" ""
+}
+
+# md_scan を直接呼ぶ。使い方: md_scan_of <Markdown の本文> <jq のフィルター>
+md_scan_of() {
+  # shellcheck disable=SC2016 # DW_JQ_MD_SCAN と $b は jq のプログラムなので、bash に展開させない
+  run "${TEST_BASH:-bash}" -c '. "$1"; jq -nc --arg b "$2" "$DW_JQ_MD_SCAN"'"'"'$b | md_scan | '"'"'"$3"' _ "$SCRIPTS/lib/common.sh" "$1" "$2"
+}
+
+@test "md_scan：複数行のコメントを閉じる行の --> の後ろの文字は、本文の行として lines に残す（項目や見出しにはしない）" {
+  md_scan_of $'<!-- 例:\n- [ ] 隠れる\n--> 後ろの文字\n- [ ] 見える' '[.lines[] | [.line, .text]], [.items[].text], .headings'
+  assert_success
+  assert_output $'[[2," 後ろの文字"],[3,"- [ ] 見える"]]\n["見える"]\n[]'
+  # GitHub では、--> の後ろは HTML ブロックの続きとして表示され、Markdown としては読まれない（gh api markdown で確かめた）
+  md_scan_of $'<!-- a\n--> - [ ] x\n- [ ] y' '[.items[].text], [.lines[].text]'
+  assert_output $'["y"]\n[" - [ ] x","- [ ] y"]'
+  md_scan_of $'<!-- a\n--> # h\n- [ ] y' '.headings, [.lines[].text]'
+  assert_output $'[]\n[" # h","- [ ] y"]'
+}
+
+@test "md_scan：コメントを閉じる行の --> だけの行（後ろが空）は、lines に残さない" {
+  md_scan_of $'<!-- a\n-->\n- [ ] y' '[.lines[] | [.line, .text]]'
+  assert_output '[[2,"- [ ] y"]]'
+}
+
+@test "md_scan：コメントを閉じる行の --> の後ろに閉じない <!-- があれば、GitHub と同じく文書の最後まで隠す" {
+  # gh api markdown で確かめた：閉じない <!-- は、後ろの --> があっても、文書の最後までを隠す
+  md_scan_of $'<!-- a\n--> x <!-- b\n-->\n- [ ] y' '[.lines[] | [.line, .text]], [.items[].text]'
+  assert_output $'[[1," x <!-- b"]]\n[]'
+  # 後ろでコメントが閉じていれば、続きは読む
+  md_scan_of $'<!-- a\n--> x <!-- b -->\n- [ ] y' '[.items[].text]'
+  assert_output '["y"]'
+}
+
+@test "md_scan：行の途中で始まる複数行のコメントは、コメントとみなさない（GitHub は <!-- を文字として表示し、間の行も表示する）" {
+  # gh api markdown で確かめた：段落や項目の中の <!-- は、閉じる --> が後の行にあっても、そのまま表示され、間の項目も項目になる
+  md_scan_of $'text <!-- start\n- [ ] 見える\nend -->\n- [ ] b' '[.items[] | [.line, .text]], [.lines[].text]'
+  assert_output $'[[1,"見える"],[3,"b"]]\n["text <!-- start","- [ ] 見える","end -->","- [ ] b"]'
+  md_scan_of $'- [ ] foo <!-- note\n- [ ] bar\n-->' '[.items[].text]'
+  assert_output '["foo <!-- note","bar"]'
+}

@@ -182,14 +182,14 @@ fi
 grouped=false
 [ -z "$merged_from$pulled_from" ] || grouped=true
 # 使い方: shas <コミット> → そのコミットから届き、基準に無いコミットの完全な sha の配列（JSON）
-shas() { git -C "$repo_root" rev-list "$1" "^$to" -- | jq -R -s -c 'split("\n") | map(select(. != ""))'; }
+shas() { git -C "$repo_root" rev-list "$1" "^$to" -- | dw_json_lines_nonempty; }
 # 一覧（push で入るコミット）と、控えた sha から届くコミット（どちらも基準に無いものだけ）を、git でたどって求め、
 # jq で組に分ける。それぞれを変数に取り、git が失敗すれば1行のメッセージで止まる（まとめて1つのパイプにすると、
 # 途中の失敗が見えず、空の一覧で組を誤る）。一覧は長くなりうる（main のコミットを数千件取り込むなど）ので、jq には
 # 引数ではなく標準入力で渡す。署名を表示する設定（log.showSignature）でも、gpg の行が混ざらないようにする。
 # 区切りは件名に現れない \x1f
 commits="$(git -C "$repo_root" log --no-show-signature --format='%H%x1f%h%x1f%s' "$head_ref" "^$to" -- \
-  | jq -R -s -c 'split("\n") | map(select(. != "") | split("\u001f") | {full: .[0], sha: .[1], subject: (.[2:] | join("\u001f"))})')" \
+  | dw_json_lines_nonempty 'map(split("\u001f") | {full: .[0], sha: .[1], subject: (.[2:] | join("\u001f"))})')" \
   || dw_die "push で入るコミットを調べられませんでした（git が失敗しました）"
 reach_m='[]' reach_p='[]'
 if [ -n "$merged_from" ]; then

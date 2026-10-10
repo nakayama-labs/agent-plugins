@@ -480,3 +480,19 @@ YML
   assert_success
   assert_equal "$(jq -c '[.not_running, .unknown]' <<<"$output")" '[[],[]]'
 }
+
+@test "チェックの名前に絵文字があっても（4096 バイトを超えても）壊さずに、そのまま結果に出す" {
+  # 標準入力の jq -R -s は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す
+  setup_fake_gh
+  workflow ci.yml <<'YML'
+on:
+  merge_group:
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+YML
+  name="$(emoji_text 1500)"
+  run_check --branch main --check "$name" --check lint
+  assert_success
+  assert_equal "$(jq -r --arg n "$name" '[.. | strings | select(. == $n)] | length > 0' <<<"$output")" true
+}

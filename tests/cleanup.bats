@@ -758,3 +758,31 @@ make_bare_layout() {
   assert_equal "$(jq -c '[.main_root, .worktree, .removed.worktree, .removed.branch]' <<<"$json")" "[\"$SM\",\"$TMP/smwt\",true,true]"
   [ ! -e "$TMP/smwt" ]
 }
+
+@test "--abandon で、失うコミットの件名に絵文字があっても（4096 バイトを超える1行でも）壊さずに伝える" {
+  # 標準入力の jq -R -s は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す
+  setup_branch
+  subject="feat: $(emoji_text 1500)"
+  git -C "$WT" commit -q --allow-empty -m "$subject"
+  run_cleanup --branch feat/17-x --abandon --dry-run
+  assert_success
+  assert_equal "$(jq -r '.lost.commits[0] | sub("^[0-9a-f]+ "; "")' <<<"$json")" "$subject"
+}
+
+@test "--abandon の失うものの一覧は、複数行・絵文字・空行を含む値でも壊れず、大きな値でも引数の長さの上限で失敗しない" {
+  # lose() は、一覧を jq の引数ではなく標準入力で渡す。空行は除き、種類ごとに足す
+  # shellcheck disable=SC2016 # 引数は、起動した bash の中で展開させる
+  run "${TEST_BASH:-bash}" -c '
+    set -euo pipefail
+    . "$1/lib/common.sh"
+    eval "$(sed -n "/^lost=/,/^}/p" "$1/cleanup.sh")"
+    lose uncommitted "$(printf "a.txt\n\n😀 b.txt\n")"
+    lose uncommitted "c.txt"
+    big="$(for i in $(seq 1 6000); do printf "%0100d😀\n" "$i"; done)"
+    lose ignored "$big"
+    printf "%s" "$lost" | jq -c "[.uncommitted, (.ignored | length), .ignored[-1], .commits]"
+  ' _ "$SCRIPTS"
+  assert_success
+  assert_equal "$(jq -c '[.[0], .[1], .[3]]' <<<"$output")" '[["a.txt","😀 b.txt","c.txt"],6000,[]]'
+  assert_equal "$(jq -r '.[2]' <<<"$output")" "$(printf '%0100d😀' 6000)"
+}

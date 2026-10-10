@@ -215,7 +215,8 @@ fm_list() {
 }
 
 # 1行に1つの値を JSON の配列にする
-lines_json() { jq -Rsc 'split("\n") | map(select(. != ""))'; }
+# shellcheck disable=SC2119 # 引数（フィルター）は省く
+lines_json() { dw_json_lines_nonempty; }
 
 records='[]'
 invalid='[]'

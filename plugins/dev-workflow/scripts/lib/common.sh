@@ -17,6 +17,35 @@ dw_warn() {
   printf 'warn: %s\n' "$1" >&2
 }
 
+# 長くなりうる文を `jq -R`・`jq -R -s` で読むと、1行が約 4096 バイトを超えるとき、その区切りにかかった BMP の外の文字（絵文字など）が壊れる
+# （jq の既知の不具合）。--rawfile なら壊れないので、標準入力の文を jq に渡すときは、`jq -R` を使わずに、dw_jq_text を使う。
+# 標準入力の全体を、jq の変数 $dw_in（文字列）にして、jq を1回だけ起動する（jq -n --rawfile dw_in に引数を足す）。
+# 入力の文字列を、`.` ではなく `$dw_in` で読む。標準入力は /dev/stdin を jq に直接読ませる（一時ファイルもプロセス置換も使わないので、読めなかったときは jq が失敗する）。
+# jq のプログラムは引数で渡す（標準入力から読む形ではない）
+# 使い方: dw_jq_text -r --arg b "$x" '$dw_in | split("\n") | .[0]' <<<"$text"
+dw_jq_text() {
+  jq -n --rawfile dw_in /dev/stdin "$@"
+}
+
+# 標準入力の各行を、JSON の文字列の配列にして1行で出力する（`jq -R . | jq -sc .` と同じ。空行も1つと数える。
+# 最後の改行の後ろの空の行は数えない）。dw_jq_text を通すので、絵文字が壊れない
+# 使い方: arr="$(printf '%s\n' "$a" "$b" | dw_json_lines)"
+dw_json_lines() {
+  # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
+  dw_jq_text -c '$dw_in | split("\n") | if .[-1] == "" then .[:-1] else . end'
+}
+
+# 標準入力の各行から、空行を除いた JSON の配列を1行で出力する。第1引数の jq のフィルター（配列を受け取る。既定は .）を通した結果を出す。
+# 第2引数以降は jq の引数（--argjson など）。行を読んで空行を除く処理は、ここにそろえる（各所に split("\n") を書かない）
+# 使い方: arr="$(git ... | dw_json_lines_nonempty)"
+#         arr="$(printf '%s\n' "$a" | dw_json_lines_nonempty '. + $e | unique' --argjson e "$extra")"
+dw_json_lines_nonempty() {
+  local filter="${1:-.}"
+  [ $# -eq 0 ] || shift
+  # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
+  dw_jq_text -c "$@" '$dw_in | split("\n") | map(select(. != "")) | '"$filter"
+}
+
 # 必要なコマンドが無ければ終了する。
 dw_require() {
   local cmd
@@ -115,9 +144,9 @@ dw_issue_branches() {
   # 並べ方は jq の文字の順（ロケールに左右されない。重複を消すときに、別の名前を同じとみなさない）
   # shellcheck disable=SC2016 # jq の変数を bash に展開させない
   printf '%s\n%s\n' "$names" "$(sed -n 's|^[0-9a-f]*[[:space:]]*refs/heads/||p' <<<"$refs" | awk -v k=R 'NF { print k "\t" $0 }')" \
-    | jq -R -s -r --argjson c "$3" --arg n "$2" "$DW_JQ_BRANCH_RE"'
+    | dw_jq_text -r --argjson c "$3" --arg n "$2" "$DW_JQ_BRANCH_RE"'
       ($c | branch_re) as $re | ("(^|/)0*" + $n + "-") as $broad
-      | split("\n") | map(select(. != "") | split("\t")) | group_by(.[1])
+      | ($dw_in | split("\n")) | map(select(. != "") | split("\t")) | group_by(.[1])
       | map({name: .[0][1], l: any(.[]; .[0] == "L"), r: any(.[]; .[0] == "R")})
       | map(. + {confirmed: (((((try (.name | capture($re)) catch null) // {}).issue // "") | sub("^0+"; "")) == $n)})
       | map(select(.confirmed or (.name | test($broad))))
@@ -525,7 +554,7 @@ dw_config_regex_test() {
 #                  branch-name.sh）なら、ブランチ名を作れないので「設定されていません」と報告する。
 #                  正規表現の誤りでない jq の失敗（test の catch から投げ直したものなど）は、受け皿の
 #                  「branch.pattern・labels.types の設定を検査できません（理由）」で報告する
-#   branch_config($strict)  入力（設定の JSON の文字列。jq -R -s で読む）を {c: 設定} にする。JSON として読めなければ、
+#   branch_config($strict)  入力（設定の JSON の文字列。dw_jq_text の $dw_in で渡す）を {c: 設定} にする。JSON として読めなければ、
 #                  {e: メッセージ}。読めても branch_error_by($strict) が誤りを返せば {e: メッセージ}。jq の起動 1 回で、
 #                  JSON の読み取り・検査・解析までできるようにする
 # jq の変数（$t など）を bash に展開させないため、シングルクォートで書く
@@ -565,7 +594,8 @@ def branch_config($strict): (try {c: fromjson}
 # 使い方: dw_check_branch_pattern <設定の JSON>
 dw_check_branch_pattern() {
   local msg
-  msg="$(jq -R -s -r "$DW_JQ_BRANCH_RE"'branch_config(false) | .e // empty' <<<"$1")" \
+  # shellcheck disable=SC2016 # jq の変数（$dw_in）を bash に展開させない
+  msg="$(dw_jq_text -r "$DW_JQ_BRANCH_RE"'$dw_in | branch_config(false) | .e // empty' <<<"$1")" \
     || msg="branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）"
   [ -z "$msg" ] || { printf '%s\n' "$msg"; return 1; }
 }
@@ -579,8 +609,8 @@ dw_parse_branch() {
   local out
   # 誤りは「!」を、解析の結果は「=」を先頭に付けて出し、取り違えないようにする
   # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
-  out="$(jq -R -s -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
-    branch_config(false)
+  out="$(dw_jq_text -r --arg b "$2" "$DW_JQ_BRANCH_RE"'
+    $dw_in | branch_config(false)
     | if has("e") then "!" + .e
       else .c | branch_re as $re
         | (try ($b | capture($re)) catch null) // {}
@@ -1214,7 +1244,12 @@ DW_JQ_ISSUE_TYPES='
 # ` の囲みの後ろに ` がある行（```x``` のようなインラインのコード）は囲みとみなさない。
 # リストの中のコードブロックも拾うため、囲みの字下げは問わない。
 # 複数行の HTML のコメント（行頭の <!-- から --> まで。囲みと同じく字下げは問わない）の中の行も、GitHub に表示されないので項目とみなさない。
-# GitHub と同じく、行の途中の <!--（インラインのコードや項目の補足）はコメントの始まりとみなさない。
+# GitHub と同じく、行の途中の <!--（インラインのコードや項目の補足）はコメントの始まりとみなさない
+# （gh api markdown で確かめた。段落や項目の中の <!-- は、閉じる --> が後の行にあっても、文字としてそのまま表示され、間の行も表示される）。
+# コメントを閉じる行の --> の後ろの文字は、GitHub に表示されるので、lines の行にする。ただし HTML ブロックの続きとして
+# そのまま表示される（Markdown としては読まれない）ので、項目にも見出しにもしない。その後ろに閉じない <!-- があれば、GitHub は
+# 文書の最後までを隠すので、以降の行は読まない。
+# --> の後ろの文字は、ほかの本文の行と同じく、前後の空白を外さずに残す（lines の行は \r だけを外す）。
 # 項目の文は、前後の空白を外す。source した側で使う
 # 使い方: jq "$DW_JQ_MD_SCAN"' .body | md_scan | .items'
 # shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
@@ -1223,8 +1258,13 @@ DW_JQ_MD_SCAN='
     def item: "^\\s*(?:[-*+]|[0-9]+[.)])\\s+\\[(?<c>[ xX])\\](?:\\s+(?<t>.*))?$";
     reduce (split("\n") | to_entries[]) as $e ({fence: null, comment: false, items: [], headings: [], lines: []};
       ($e.value | sub("\r$"; "")) as $l | .fence as $f
-      | if .comment then
-          (if $l | test("-->") then .comment = false else . end)
+      | if .comment == "eof" then .
+        elif .comment then
+          (if $l | test("-->") then
+            ($l | sub("^.*?-->"; "")) as $tail
+            | .comment = ($tail | test("<!--(?!.*-->)") | if . then "eof" else false end)
+            | if $tail != "" then .lines += [{line: $e.key, text: $tail}] else . end
+          else . end)
         elif $f != null then
           (if $l | test("^\\s*" + $f + "+\\s*$") then .fence = null else . end)
         elif $l | test("^\\s*(`{3,}[^`]*|~{3,}.*)$") then .fence = ($l | capture("^\\s*(?<f>`{3,}|~{3,})").f)

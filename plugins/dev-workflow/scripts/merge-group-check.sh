@@ -86,8 +86,10 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$branch" ] || dw_die "--branch を指定してください" 64
 
+# --checks-json の配列には空の文字列がありうる（文字列の配列かだけを確かめている）ので、足した後にも空を除く
+# shellcheck disable=SC2016 # jq の変数を bash に展開させない
 checks_json="$(printf '%s\n' ${checks[@]+"${checks[@]}"} \
-  | jq -R -s -c --argjson e "$extra" 'split("\n") + $e | map(select(. != "")) | unique')"
+  | dw_json_lines_nonempty '. + $e | map(select(. != "")) | unique' --argjson e "$extra")"
 
 # 結果に、利用者に伝える文（messages）を添えて出力する。使い方: output <ワークフローの JSON> <チェックごとの結果の JSON>
 output() {

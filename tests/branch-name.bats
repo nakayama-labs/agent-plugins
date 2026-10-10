@@ -461,3 +461,19 @@ SH
   assert_failure 2
   assert_equal "$(grep -c '^branch$' "$TMP/jq.log")" 1
 }
+
+@test "dw_parse_branch は、設定の branch.pattern に絵文字があっても（4096 バイトを超える1行でも）壊さずに読んで、名前に当てる" {
+  # 標準入力の jq -R -s は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す。
+  # 壊れた branch.pattern は、名前に合わなくなる。区切りにまたがる位置を変えるため、先頭の ASCII の長さをずらして4回確かめる
+  # （branch-name.sh は、絵文字を含む名前を作らず、検査もしないので、絵文字の入った設定は、この関数でだけ名前に当てられる）
+  emoji="$(for _ in $(seq 1 1200); do printf '😀'; done)"
+  for k in 0 1 2 3; do
+    lead="$(printf 'x%.0s' $(seq 1 $((k + 1))))"
+    config="$(jq -nc --arg p "${lead}${emoji}{type}/{issue_number}-{slug}" '{branch: {pattern: $p}, labels: {types: ["feat", "fix"]}}')"
+    run_common dw_check_branch_pattern "$config"
+    assert_success
+    run_common dw_parse_branch "$config" "${lead}${emoji}fix/17-add-login"
+    assert_success
+    assert_output "fix|17"
+  done
+}

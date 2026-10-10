@@ -204,3 +204,15 @@ json_of() { printf '%s\n' "$1" | LC_ALL=C sed -n '/^{/,$p'; }
   assert_success
   assert_equal "$(jq -c '[.review.decided, .review.layers]' <<<"$output")" '[false,[]]'
 }
+
+@test "層のモデル名に絵文字があっても（4096 バイトを超える1行でも）壊さずに読む" {
+  # 標準入力の jq -Rsc は、行の先頭から約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す。
+  # 設定ファイルのパスの長さで位置が変わるので、先頭の ASCII の長さをずらして確かめる
+  for k in 0 1 2 3 4 5; do
+    model="$(printf 'x%.0s' $(seq 1 $((k + 1))))$(emoji_text 1500)"
+    jq -n --arg m "$model" '{review: {model: $m}}' >"$LOCAL"
+    run_script setup/setup-models.sh
+    assert_success
+    assert_equal "$(jq -r '.review.layers[0].model' <<<"$output")" "$model"
+  done
+}

@@ -99,7 +99,7 @@ if $save; then
   else
     target="$(dw_team_dir "$repo_root")/config.json"
   fi
-  value="$(printf '%s' "$cmds" | jq -R . | jq -sc .)"
+  value="$(printf '%s' "$cmds" | dw_json_lines)"
   if [ -f "$target" ]; then
     dw_check_json "$target"
     jq -e '(.checks // {}) | type == "object"' "$target" >/dev/null \
@@ -193,7 +193,8 @@ if [ "$commands" = null ]; then
     scripts="$(jq -c '((.scripts // {}) | if type == "object" then . else {} end) | with_entries(select(.key | test("^(test|lint|check|typecheck|build|verify|ci)")))' "$repo_root/package.json" 2>/dev/null)" \
       || dw_die "package.json を JSON として読めません" 2
   fi
-  lines() { printf '%s' "$1" | jq -R . | jq -sc 'map(select(. != ""))'; }
+  # shellcheck disable=SC2119 # 引数（フィルター）は省く
+  lines() { printf '%s' "$1" | dw_json_lines_nonempty; }
   hints="$(jq -nc --arg c "$contributing" --argjson s "$scripts" --argjson t "$(lines "$targets")" \
     --argjson w "$(lines "$ci")" --argjson p "$(lines "$proj")" \
     '{contributing: (if $c == "" then null else $c end), package_scripts: $s, makefile_targets: $t, ci_workflows: $w, project_files: $p}')"
@@ -201,7 +202,7 @@ fi
 
 warning="" saved_value=""
 if $save; then
-  saved_value="$(printf '%s' "$cmds" | jq -R . | jq -sc .)"
+  saved_value="$(printf '%s' "$cmds" | dw_json_lines)"
   if $none; then saved_value='[]'; fi
   if [ "$commands" != "$saved_value" ]; then
     warning="保存した値（${scope}）より優先される層が checks.commands を決めているため、実際に使われるのは ${commands} です"

@@ -91,7 +91,7 @@ if [ -n "$approvals" ] && [ "$approvals" -gt 10 ]; then
 fi
 
 # 必須のチェックの名前（指定が無ければ []）。重複は1つにまとめる
-checks_json="$(printf '%s\n' ${checks[@]+"${checks[@]}"} | jq -R -s -c 'split("\n") | map(select(. != "")) | unique')"
+checks_json="$(printf '%s\n' ${checks[@]+"${checks[@]}"} | dw_json_lines_nonempty unique)"
 
 repo_nwo="$(gh repo view ${repo:+"$repo"} --json nameWithOwner -q .nameWithOwner)"
 here_nwo=""

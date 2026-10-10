@@ -984,7 +984,7 @@ fake_issue_tasks() {
 
 @test "本文に絵文字があっても（128 KiB を超える1行でも）、出力の本文は PR に渡した本文と同じにする" {
   # 標準入力の jq -R は、4096 バイトを超える1行の、読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊すので、
-  # 出力の本文は --rawfile で読む（本文の Closes を整える前の読み込み（-Rrs）は、この差分より前からあり、別に直す）
+  # 出力の本文は --rawfile で読む（本文を読む他の jq も、同じ原因で直した。下の「4096 バイトを超える1行でも」のテスト）
   setup_branch
   fake_issue 17 '["feat"]'
   { printf '## 概要\n'; for _ in $(seq 1 30000); do printf 'ab😀'; done; printf '\n'; } >"$TMP/body.md"
@@ -1010,4 +1010,14 @@ fake_issue_tasks() {
     "[600,600,\"a1-${pad}\",2]"
   assert_equal "$(grep -c '^- \[x\] c' "$TMP/issue-edit-body")" 600
   assert_equal "$(grep -c '^- \[ \] a' "$TMP/issue-edit-body")" 600
+}
+
+@test "本文に絵文字があっても（4096 バイトを超える1行でも）壊さずに、破壊的変更の確かめと Closes の付け足しをして PR を作る" {
+  # 標準入力の jq -Rs・-Rrs は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す
+  setup_branch
+  fake_issue 17 '["feat", "breaking"]'
+  { printf '## 概要\n'; emoji_text 3000; printf '\n\nBREAKING CHANGE: 設定を直す\n'; } >"$TMP/body.md"
+  run_pr --issue 17 --body-file "$TMP/body.md"
+  assert_success
+  assert_equal "$(jq -r .body <<<"$json")" "$({ cat "$TMP/body.md"; printf '\nCloses #17'; })"
 }

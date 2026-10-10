@@ -183,7 +183,8 @@ fi
 
 # --- 2. Issue を作る ------------------------------------------------------------
 # 本文は大きいことがあるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
-issue="$(printf '%s' "$body" | jq -Rs --arg t "$title" --argjson l "$labels" '{title: $t, body: ., labels: $l}' \
+# shellcheck disable=SC2016 # jq の変数を bash に展開させない
+issue="$(printf '%s' "$body" | dw_jq_text --arg t "$title" --argjson l "$labels" '{title: $t, body: $dw_in, labels: $l}' \
   | gh api -X POST "repos/$repo_nwo/issues" --input -)" || dw_die "Issue を作れませんでした"
 issue_number="$(jq -r .number <<<"$issue")"
 issue_url="$(jq -r .html_url <<<"$issue")"

@@ -707,3 +707,13 @@ auto_branch() {
   assert_success
   assert_equal "$(jq -c '[.perspectives[] | select(.name == "mine")] | length' <<<"$output")" 0
 }
+
+@test "paths のパターンに絵文字があっても（4096 バイトを超える1行でも）壊さずに読む" {
+  # 標準入力の jq -Rsc は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す
+  branch_changing a.txt
+  pattern="$(emoji_text 1500)"
+  perspective_when emoji-path "paths: \"${pattern}\""
+  run_script review-perspectives.sh --base "$BASE" --target main
+  assert_success
+  assert_equal "$(skipped_reason emoji-path)" "差分のファイルが paths（${pattern}）に当たらない"
+}

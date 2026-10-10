@@ -72,7 +72,7 @@ team_file="$(dw_team_dir "$repo_root")"
 local_file="$(dw_local_config_file "$repo_root")"
 
 # 層ごとに review.model を決めているか（null も「オフに決めた」とみなす）。優先度の低い順に並べる
-layers="$(dw_review_model_layers "$repo_root" | jq -Rsc 'split("\n") | map(select(. != "") | split("\t")
+layers="$(dw_review_model_layers "$repo_root" | dw_json_lines_nonempty 'map(split("\t")
   | {layer: .[0], file: .[1], model: (.[2] | fromjson)})')"
 
 file=null changed=false actions='[]' local_git=null

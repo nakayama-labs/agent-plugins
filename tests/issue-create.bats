@@ -740,3 +740,12 @@ assert_no_changes() {
   assert_success
   assert_equal "$(args CreateIssue | jq -r .body)" "$(cat body.md)"
 }
+
+@test "本文に絵文字があっても（4096 バイトを超える1行でも）壊さずに Issue を作れる" {
+  # 標準入力の jq -Rs は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す
+  setup_fake_gh
+  { printf '## 背景\n'; emoji_text 3000; } >body.md
+  run_create --title t --type feat --body-file body.md
+  assert_success
+  assert_equal "$(args CreateIssue | jq -r .body)" "$(cat body.md)"
+}

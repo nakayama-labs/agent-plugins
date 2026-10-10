@@ -787,3 +787,13 @@ subjects() { jq -r --arg k "$1" '.push_commits[$k] | if . == null then "null" el
   assert_failure 1
   assert_output --partial "未コミットの変更を調べられませんでした"
 }
+
+@test "push で入るコミットの件名に絵文字があっても（4096 バイトを超える1行でも）壊さずに伝える" {
+  # 標準入力の jq -R -s は、約 4096 バイトの読み込みの区切りにまたがる BMP の外の文字（絵文字）を壊す
+  setup_branch
+  subject="feat: $(emoji_text 1500)"
+  git commit -q --allow-empty -m "$subject"
+  run_status
+  assert_success
+  assert_equal "$(jq -r '.push_commits.all[0].subject' <<<"$output")" "$subject"
+}

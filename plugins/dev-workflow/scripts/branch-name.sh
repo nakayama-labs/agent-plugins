@@ -70,8 +70,8 @@ if [ -n "$check" ]; then
     # dw_parse_branch・dw_issue_branches と同じ正規表現）。設定の誤り（正しくない正規表現・文字列でない branch.pattern など）は、
     # ブランチ名が合わない（1）ではなく設定の誤り（2）にする。誤りは「!」、合わなければ「-」と branch.pattern、合えば「+」を出す
     # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
-    out="$(jq -R -s -r --arg b "$check" "$DW_JQ_BRANCH_RE"'
-      branch_config(false)
+    out="$(dw_jq_text -r --arg b "$check" "$DW_JQ_BRANCH_RE"'
+      $dw_in | branch_config(false)
       | if has("e") then "!" + .e
         elif (.c | branch_re) as $re | $re != null and ($b | test($re)) then "+"
         else "-" + (.c.branch.pattern | if type == "string" then . else tojson end) end' <<<"$config")" \
@@ -102,8 +102,8 @@ config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 # 検査では通す無い・null の branch.pattern と labels.types も要るので、ここで止める（jq -r が「null」という名前にするため）。
 # 検査と branch.pattern の読み取りは、1回の jq で行う。誤りは「!」、branch.pattern は「=」を先頭に付けて出す
 # shellcheck disable=SC2016 # jq の変数を bash に展開させない
-out="$(jq -R -s -r "$DW_JQ_BRANCH_RE"'
-  branch_config(true) | if has("e") then "!" + .e else "=" + .c.branch.pattern end' <<<"$config")" \
+out="$(dw_jq_text -r "$DW_JQ_BRANCH_RE"'
+  $dw_in | branch_config(true) | if has("e") then "!" + .e else "=" + .c.branch.pattern end' <<<"$config")" \
   || dw_die "branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）" 2
 case "$out" in
   '!'*) dw_die "${out#!}" 2 ;;

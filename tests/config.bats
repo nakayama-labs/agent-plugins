@@ -281,3 +281,16 @@ load test_helper
   run_script config.sh .set_up
   assert_output "true"
 }
+
+@test "sources は、設定ファイルのパスに絵文字があっても壊さずに出す（4096 バイトの区切りにかかる入力は作れない）" {
+  # 標準入力の jq -R は、1行が約 4096 バイトを超えるとき、行の先頭から 4092〜4094 バイト目に始まる絵文字を壊す。
+  # sources は1行に1つのパスで、パスは PATH_MAX（4096）未満なので、その位置に絵文字が来る行は作れない。
+  # 修正前でも通る（回帰テストではない）。絵文字のパスが、dw_json_lines_nonempty を通っても保たれることだけ確かめる
+  mark_set_up
+  dir="$TMP/😀😀-user"
+  mkdir -p "$dir"
+  echo '{"language": "en"}' >"$dir/config.json"
+  WORKFLOW_USER_DIR="$dir" run_script config.sh '.sources | tojson'
+  assert_success
+  assert_equal "$(jq -r 'map(select(endswith("😀😀-user/config.json"))) | length' <<<"$output")" 1
+}

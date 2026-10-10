@@ -118,3 +118,11 @@ run_script() {
   shift
   run "${TEST_BASH:-bash}" "$SCRIPTS/$name" "$@"
 }
+
+# 'ab😀' を <回数> だけ並べた文字列を出力する。1周が6バイトなので、約 4096 バイトごとの読み込みの区切りに、
+# BMP の外の文字（絵文字。4バイト）がまたがる。jq -R で読むと壊れる入力を作るのに使う（約 4096 バイトより長くなる回数にする）
+# 使い方: text="$(emoji_text 1500)"
+emoji_text() {
+  local i
+  for ((i = 0; i < $1; i++)); do printf 'ab😀'; done
+}
