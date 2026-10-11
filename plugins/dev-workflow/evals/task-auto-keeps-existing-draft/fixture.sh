@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # task-auto を有効にし、保留の列（On Hold）があるリポジトリ。Issue #2 は、別れの挨拶のスクリプト bin/farewell.sh を足す feat。
 # 前の実行（または人）が、ブランチ feat/2-add-farewell に実装をコミットして push し、下書きの PR #98 を出してある（task-auto の resume）。
-# 実行し直した task-auto が、その PR に push するだけで下書きのまま残し、gh pr ready を実行せず、人に ready にするよう伝えるかを見る
+# ブランチには、push していない手元のコミットが1つある。実行し直した task-auto が、その PR のブランチに push して（リモートが更新される）、
+# 下書きのまま残し、gh pr ready を実行せず、人に ready にするよう伝えるかを見る
 # （task-auto の手順6・7。人が意図して下書きにした PR を自動で覆さない。#282・#353）
 # 実装は済んでいて、レビューで指摘が出ないようにし、実行を短く、結果を揺れにくくする。観点は全部止め、周回は1周にする
 set -euo pipefail
@@ -18,14 +19,19 @@ done
 git add -A
 git commit -q -m "feat: 挨拶のスクリプトを足す"
 git push -q origin main
-# 前の作業のブランチ：実装を1コミットして push する（手元のブランチも残す）
+# 前の作業のブランチ：1つ目のコミットは push 済み（下書きの PR #98 の中身）。2つ目のコミットは手元にだけあり、push していない
+# （task-auto が既にある PR のブランチに push するかを、リモートの更新で確かめるため）
 git switch -q -c feat/2-add-farewell
 # shellcheck disable=SC2016 # 書き出すスクリプトの中身なので、展開させない
-printf '#!/usr/bin/env bash\n# 別れの挨拶を出す。使い方: farewell.sh <名前>\nset -euo pipefail\nprintf '"'"'Goodbye, %%s!\\n'"'"' "$1"\n' >bin/farewell.sh
+printf '#!/usr/bin/env bash\nset -euo pipefail\nprintf '"'"'Goodbye, %%s!\\n'"'"' "$1"\n' >bin/farewell.sh
 chmod +x bin/farewell.sh
 git add -A
 git commit -q -m "feat: 別れの挨拶のスクリプトを足す"
 git push -q -u origin feat/2-add-farewell
+# shellcheck disable=SC2016 # 書き出すスクリプトの中身なので、展開させない
+printf '#!/usr/bin/env bash\n# 別れの挨拶を出す。使い方: farewell.sh <名前>\nset -euo pipefail\nprintf '"'"'Goodbye, %%s!\\n'"'"' "$1"\n' >bin/farewell.sh
+git add -A
+git commit -q -m "docs: farewell.sh に使い方のコメントを足す"
 git switch -q main
 body="## 背景
 挨拶のスクリプト（bin/greet.sh）はあるが、別れの挨拶を出すスクリプトが無い。

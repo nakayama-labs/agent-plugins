@@ -9,7 +9,7 @@ setup() {
   test_helper_setup
   WS="$TMP/ws"
   mkdir -p "$WS"
-  cd "$WS" || return 1
+  CDPATH='' cd "$WS" || return 1
   # 準備のスクリプトが作るリポジトリで、偽の gh を使えるようにする（tests/eval/run.sh と同じ）
   export PATH="$BATS_TEST_DIRNAME/eval/bin:$PATH"
 }
@@ -125,7 +125,7 @@ scaffold() {
 @test "各ケースの準備のスクリプトが成功する" {
   local f n=0
   for f in "$EVALS"/*/fixture.sh; do
-    rm -rf "$WS" && mkdir -p "$WS" && cd "$WS"
+    rm -rf "$WS" && mkdir -p "$WS" && CDPATH='' cd "$WS"
     run "${TEST_BASH:-bash}" "$f"
     assert_success
     n=$((n + 1))
@@ -226,7 +226,7 @@ grader_matches() {
   printf '#!/usr/bin/env bash\nset -euo pipefail\nprintf "Goodbye, %%s!\\n" "$1"\n' >"$wt/bin/farewell.sh"
   git -C "$wt" add bin/farewell.sh
   git -C "$wt" commit -q -m "feat: 別れの挨拶のスクリプトを足す"
-  cd "$wt"
+  CDPATH='' cd "$wt"
   # レビューは、リポジトリの誤字の観点だけを使い、1周で終える
   run_script review-perspectives.sh --auto
   assert_success
@@ -239,7 +239,7 @@ grader_matches() {
   run_script pr-create.sh --issue 2 --body-file "$TMP/pr.md" --no-draft
   assert_success
   assert_equal "$(jq -c '[.created, .draft, .pr.number]' <<<"$output")" '[true,false,98]'
-  cd "$WS"
+  CDPATH='' cd "$WS"
   grader_matches "$c" files-issue .fake-gh/writes || fail "files-issue に当たりません: $(cat .fake-gh/writes)"
   grader_matches "$c" opens-pr .fake-gh/writes || fail "opens-pr に当たりません: $(cat .fake-gh/writes)"
   # PR の本文は、偽の gh が残したものを pr-body-lists-filed が採点する
@@ -250,7 +250,8 @@ grader_matches() {
   local c=task-auto-keeps-existing-draft
   run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
   assert_success
-  git rev-parse --verify -q origin/feat/2-add-farewell
+  # 手元のブランチには、push していないコミットが1つある（リモートは1つ前）
+  assert_equal "$(git rev-parse feat/2-add-farewell~1)" "$(git rev-parse origin/feat/2-add-farewell)"
   run_script auto-check.sh --issue 2
   assert_success
   assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/2-add-farewell"]'
@@ -259,16 +260,31 @@ grader_matches() {
   local wt
   wt="$(jq -r .worktree <<<"$output")"
   [ -f "$wt/bin/farewell.sh" ] || fail "前の作業のコミットから続けていません"
-  cd "$wt"
+  CDPATH='' cd "$wt"
   printf '## 概要\n別れの挨拶\n\nCloses #2\n' >"$TMP/pr.md"
+  # push の前の時刻を印にして、run 後に作られたリモートのファイルの一覧を作る（eval の files と同じ見方）
+  : >"$TMP/before"
+  sleep 1
   run_script pr-create.sh --issue 2 --body-file "$TMP/pr.md" --no-draft
   assert_success
   assert_equal "$(jq -c '[.created, .draft, .pr.number]' <<<"$output")" '[false,true,98]'
-  cd "$WS"
+  CDPATH='' cd "$WS"
+  # 既にある PR のブランチに push し、リモートが手元のブランチに追い付いた
+  assert_equal "$(git rev-parse feat/2-add-farewell)" "$(git -C .fake-remote.git rev-parse feat/2-add-farewell)"
+  find .fake-remote.git -type f -newer "$TMP/before" >"$TMP/files"
+  grader_matches "$c" pushes-branch "$TMP/files" || fail "pushes-branch に当たりません: $(cat "$TMP/files")"
   # 既にある PR には push するだけ。新しい PR も、ready にする書き込みも無い
   for g in no-ready no-new-pr; do
     if grader_matches "$c" "$g" .fake-gh/writes; then fail "$g に当たります: $(cat .fake-gh/writes)"; fi
   done
+}
+
+@test "task-auto の下書きの PR のケースの pushes-branch は、push していない（リモートにファイルが作られていない）記録には当たらない" {
+  local c=task-auto-keeps-existing-draft
+  : >"$TMP/files"
+  if grader_matches "$c" pushes-branch "$TMP/files"; then fail "空の一覧に pushes-branch が当たります"; fi
+  printf '.fake-remote.git/objects/ab/cdef\n' >"$TMP/files"
+  grader_matches "$c" pushes-branch "$TMP/files" || fail "push の記録に pushes-branch が当たりません"
 }
 
 @test "task-auto の下書きの PR のケースの no-ready は、PR を ready にする書き込みに当たる" {
