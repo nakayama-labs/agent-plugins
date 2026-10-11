@@ -16,7 +16,7 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 
 スクリプト（どれも JSON を出力する）:
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/pr-feedback.sh`：PR の状態（CI・レビュー・マージできるか）と、resolved でないスレッド・レビュー本文・PR のコメントを投稿者ごとにまとめ、担当の skill（設定の `pr_check.handlers`）を添えて出力する。返事をしていないもの（スレッド・レビュー本文・PR のコメント）があるかの目印も、`needs_attention`・`counts.unanswered`・各項目の `replied`・`needs_attention` に出す。これらの意味は `pr-feedback.sh --help` の「意味」を参照する（ここには書き写さない）。何も変えない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/pr-feedback.sh`：PR の状態（CI・レビュー・マージできるか）と、resolved でないスレッド・レビュー本文・PR のコメントを投稿者ごとにまとめ、担当の skill（設定の `pr_check.handlers`）を添えて出力する。返事をしていないもの（スレッド・レビュー本文・PR のコメント）があるかの目印も、`needs_attention`・`counts.unanswered`・`counts.awaiting`・各項目の `replied`・`needs_attention` に出す。これらの意味は `pr-feedback.sh --help` の「意味」を参照する（ここには書き写さない）。何も変えない（`--help` で使い方）
 - `${CLAUDE_PLUGIN_ROOT}/scripts/pr-watch.sh`：手順1で、一覧へ進むか終えるか（`respond`）と、終えるときに伝えること（`reasons`）を、PR の今の状態から値で出す。`pr-feedback.sh` の判定をそのまま使う。何も変えない（`--help` で値の表）
 
 ## 手順
@@ -44,7 +44,7 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
   - `draft`・`fork`：ドラフト・フォークからの PR
 
 - スレッドの件数（`counts.threads`）だけを見て「未解決なし」「対応はありません」と言わない。diff の外の指摘はレビュー本文に、質問は PR のコメントにあり、スレッドが無いので `counts.threads` に現れない
-- 出力を `jq` で絞って読むときも、`threads` だけを取り出さず、`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない
+- 出力を `jq` で絞って読むときも、`threads` だけを取り出さず、`reviews`・`comments`・`needs_attention`・`counts.unanswered`・`counts.awaiting` を落とさない
 
 ### 2. 担当を分ける
 

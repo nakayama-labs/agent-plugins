@@ -73,7 +73,7 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
      | jq '.feedback[] | select((.author | ascii_downcase | sub("\\[bot\\]$"; "")) == "some-reviewer")'
    ```
    比べる名前は小文字で書きます。`pr-feedback.sh` は、作者名を小文字にして末尾の `[bot]` を取り除いたもの（`ascii_downcase` と `sub("\\[bot\\]$"; "")`）で照らすので、例の `jq` も作者名を同じように正規化してから、小文字の名前と比べています。
-   各要素には、返信待ちのスレッド（`threads`）、レビュー本文（`reviews`）、PR のコメント（`comments`）が入っています。各項目の `replied`・`needs_attention` と、`counts.unanswered` の意味は、`pr-feedback.sh --help` の「意味」を参照してください。diff の外の指摘はスレッドが無く `threads` に現れないので、`threads` だけを見て「指摘なし」としないでください。出力の全項目は、スクリプト冒頭のコメントにあります。
+   各要素には、返信待ちのスレッド（`threads`）、レビュー本文（`reviews`）、PR のコメント（`comments`）が入っています。各項目の `replied`・`needs_attention` ・`counts.unanswered`・`counts.awaiting` の意味は、`pr-feedback.sh --help` の「意味」を参照してください。diff の外の指摘はスレッドが無く `threads` に現れないので、`threads` だけを見て「指摘なし」としないでください。出力の全項目は、スクリプト冒頭のコメントにあります。
 3. **投稿者の名前の調べ方**：PR に付いた指摘の投稿者は、`gh pr view <PR番号> --json comments,reviews --jq '[.comments[].author.login, .reviews[].author.login] | unique'` で分かります。設定のキーと `feedback[].author` は、大文字と小文字、末尾の `[bot]` を区別せずに照らされます（`gh` は bot の名前を `[bot]` なしで返します）。
 4. **守る決まり**
    - 自分の担当の投稿者の分だけを扱います。ほかの投稿者の指摘や、人のコメントは、触らずに `gh-pr-check` の汎用の手順に任せます。

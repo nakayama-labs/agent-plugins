@@ -377,7 +377,7 @@ has() {
   grep -q '手順4で選べる指摘・質問が無くて来たときは.*CI・マージの状態' <<<"$s9" \
     || fail "gh-pr-check の手順9に、手順4から来たときに件数と CI・マージの状態を伝えることが書かれていません"
   grep -q 'counts.threads.*だけを見て' "$f" || fail "gh-pr-check に、スレッドの件数だけで未解決なしと言わないことが書かれていません"
-  grep -q '`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない' "$f" \
+  grep -q '`reviews`・`comments`・`needs_attention`・`counts.unanswered`・`counts.awaiting` を落とさない' "$f" \
     || fail "gh-pr-check に、出力を絞って読むときも reviews・comments を落とさないことが書かれていません"
   grep -q '`needs_attention` が true の項目.*必ず一覧に入れる' "$f" || fail "gh-pr-check に、needs_attention が true の項目を必ず一覧に入れることが書かれていません"
 }
