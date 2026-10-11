@@ -231,6 +231,37 @@ SHIM
   assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".Claude/settings.json",".GitHub/x","sub/.CLAUDE/x"]]'
 }
 
+@test "NTFS で同じ名前になる別名（末尾の点・空白）も止める（.claude.・.github ・sub/.claude. ./x。#356）" {
+  commit_index_only '.claude./settings.json' '{}'
+  commit_index_only '.github /x' x
+  commit_index_only 'sub/.claude. ./x' x
+  commit_index_only '.github..' x
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,[".claude./settings.json",".github /x",".github..","sub/.claude. ./x"]]'
+}
+
+@test "NTFS の 8.3 形式の短い名前（CLAUDE~1・GITHUB~1）も止める（#356）" {
+  commit_index_only 'CLAUDE~1/settings.json' '{}'
+  commit_index_only 'sub/claude~2/x' x
+  commit_index_only 'GITHUB~1/workflows/ci.yml' x
+  commit_index_only 'GITHUB~2' x
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, (.forbidden | sort)]' <<<"$output")" '[false,["CLAUDE~1/settings.json","GITHUB~1/workflows/ci.yml","GITHUB~2","sub/claude~2/x"]]'
+}
+
+@test "別名に似ているだけのパスと、入れ子の .github の別名は止めない（#356）" {
+  commit_index_only 'docs/GITHUB~1/x' x
+  commit_index_only 'claude~x/y' x
+  commit_index_only '.claudex./y' x
+  commit_index_only 'a.claude./y' x
+  commit_index_only 'src/b.txt.' x
+  run_script repair-push-check.sh --base-branch main
+  assert_success
+  assert_equal "$(jq -c '[.ok, .forbidden]' <<<"$output")" '[true,[]]'
+}
+
 @test "止めるパスの一覧の正本は --help にある（SKILL.md・設計書はここを参照する）" {
   run_script repair-push-check.sh --help
   assert_success
@@ -238,4 +269,6 @@ SHIM
   assert_output --partial ".github という名前そのもの"
   assert_output --partial "どの階層の .claude という名前そのもの"
   assert_output --partial "大文字と小文字は区別しない"
+  assert_output --partial "NTFS"
+  assert_output --partial "8.3"
 }
