@@ -246,6 +246,42 @@ grader_matches() {
   grep -qF 'Closes #2' .fake-gh/pr-body || fail "PR の本文が .fake-gh/pr-body に残っていません"
 }
 
+@test "task-auto の下書きの PR のケースの準備の後、resume で着手し、既にある下書きの PR に push するだけで、新しい PR も ready も書き込まない" {
+  local c=task-auto-keeps-existing-draft
+  run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
+  assert_success
+  git rev-parse --verify -q origin/feat/2-add-farewell
+  run_script auto-check.sh --issue 2
+  assert_success
+  assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/2-add-farewell"]'
+  run_script task-start.sh --issue 2 --branch feat/2-add-farewell
+  assert_success
+  local wt
+  wt="$(jq -r .worktree <<<"$output")"
+  [ -f "$wt/bin/farewell.sh" ] || fail "前の作業のコミットから続けていません"
+  cd "$wt"
+  printf '## 概要\n別れの挨拶\n\nCloses #2\n' >"$TMP/pr.md"
+  run_script pr-create.sh --issue 2 --body-file "$TMP/pr.md" --no-draft
+  assert_success
+  assert_equal "$(jq -c '[.created, .draft, .pr.number]' <<<"$output")" '[false,true,98]'
+  cd "$WS"
+  # 既にある PR には push するだけ。新しい PR も、ready にする書き込みも無い
+  for g in no-ready no-new-pr; do
+    if grader_matches "$c" "$g" .fake-gh/writes; then fail "$g に当たります: $(cat .fake-gh/writes)"; fi
+  done
+}
+
+@test "task-auto の下書きの PR のケースの no-ready は、PR を ready にする書き込みに当たる" {
+  local c=task-auto-keeps-existing-draft
+  local w
+  for w in 'pr ready 98' 'pr edit 98 --ready' 'api graphql markPullRequestReadyForReview {"id":"x"}' 'api -X POST repos/me/demo/pulls/98/ready_for_review'; do
+    printf 'issue edit 2 --add-assignee @me\n%s\n' "$w" >"$TMP/writes"
+    grader_matches "$c" no-ready "$TMP/writes" || fail "no-ready が「$w」に当たりません"
+  done
+  printf 'issue edit 2 --add-assignee @me\napi -X PUT repos/me/demo/issues/2\n' >"$TMP/writes"
+  if grader_matches "$c" no-ready "$TMP/writes"; then fail "ready にしていない記録に no-ready が当たります"; fi
+}
+
 @test "task-auto の範囲外の指摘のケースの grader は、起票しないで PR を作っただけの記録には当たらない" {
   local c=task-auto-files-out-of-scope
   printf 'issue edit 2 --add-assignee @me\npr create --base main --head feat/2-add-farewell\nissue edit 2 --body-file -\n' >"$TMP/writes"
