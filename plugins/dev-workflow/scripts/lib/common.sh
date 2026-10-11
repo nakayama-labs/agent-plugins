@@ -1247,7 +1247,9 @@ DW_BREAKING_LABEL=breaking
 # GitHub と同じく、ラベルの名前は大文字と小文字を区別せずに照合する（Fix のラベルも fix として読み、Fix と fix は1つと数える）。
 # 順はラベルの順。type ラベルを読むスクリプト（pr-create.sh・branch-name.sh・review-perspectives.sh・auto-check.sh）で、照合をそろえる。
 # source した側で使う
-# 使い方: jq --argjson t "$(jq -c .labels.types <<<"$config")" "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t)'
+# labels.types は、先に dw_labels_types で検査してから渡す（文字列の配列でなければ、設定の誤りとして終了コード 2 で止まる）
+# 使い方: types_cfg="$(dw_labels_types "$config")"
+#         jq --argjson t "$types_cfg" "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t)'
 # shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
 DW_JQ_ISSUE_TYPES='
   def issue_types($t):
