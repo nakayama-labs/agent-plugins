@@ -266,3 +266,103 @@ FAKE
   run cmp "$TMP/expected" docs/adr/000003-old.md
   assert_success
 }
+
+# minimal のテンプレートにも「補足」の節がある（#379）。一部だけ変える ADR のリンクが、変えられた側の逆引きに出る
+@test "minimal の2つのテンプレートには「補足」の節がある" {
+  for t in adr-template-minimal.md adr-template-bare-minimal.md; do
+    grep -q '^## 補足$' "$TEMPLATES/$t" || fail "$t に「補足」の節がありません"
+  done
+}
+
+@test "minimal・bare-minimal で一部だけ変える ADR を書くと、変えられた側の cited_in_supplements に出る" {
+  for t in minimal bare-minimal; do
+    run_script adr-create.sh --issue 10 --name "old-$t" --template full
+    assert_success
+    run_script adr-create.sh --issue 11 --name "part-$t" --template "$t"
+    assert_success
+    printf '\n[ADR 000010](000010-old-%s.md) の一部を変える。\n' "$t" >>"docs/adr/000011-part-$t.md"
+    run_script adr-list.sh
+    assert_success
+    assert_equal "$(jq -c --arg p "docs/adr/000010-old-$t.md" '.adrs[] | select(.path == $p) | .cited_in_supplements' <<<"$output")" \
+      "[\"docs/adr/000011-part-$t.md\"]"
+    rm -f docs/adr/*.md
+  done
+}
+
+write_proposed() {
+  mkdir -p docs/adr
+  printf -- '---\nstatus: %s\ndate: 2020-01-01\nissue: 3\ndecision-makers: x\n---\n\n# 題\n\nstatus: 本文の行\ndate: 本文の日\n' "${1:-\"proposed\"}" >docs/adr/000003-p.md
+}
+
+@test "--accept は proposed の ADR の status と date の2行だけを書き換える" {
+  write_proposed
+  cp docs/adr/000003-p.md "$TMP/before.md"
+  run_script adr-create.sh --accept 000003-p.md --date 2026-10-11
+  assert_success
+  assert_equal "$(jq -c '[.path, .status, .date, .accepted, .dry_run]' <<<"$output")" '["docs/adr/000003-p.md","accepted","2026-10-11",true,false]'
+  assert_equal "$(sed -n '2,3p' docs/adr/000003-p.md)" "$(printf 'status: "accepted"\ndate: 2026-10-11')"
+  diff <(grep -v -e '^status: "proposed"' -e '^date: 2020' "$TMP/before.md") <(grep -v -e '^status: "accepted"' -e '^date: 2026' docs/adr/000003-p.md)
+}
+
+@test "--accept は --date を省くと今日の日付にし、リポジトリのルートからのパスでも指定でき、引用符の無い proposed も読む" {
+  write_proposed proposed
+  run_script adr-create.sh --accept docs/adr/000003-p.md
+  assert_success
+  assert_equal "$(sed -n '2,3p' docs/adr/000003-p.md)" "$(printf 'status: "accepted"\ndate: %s' "$(date +%F)")"
+}
+
+@test "--accept は proposed でない ADR では、何も書き換えずに終了コード 4 で止まる" {
+  for s in '"accepted"' '"superseded by 000005-x"' '"proposed-ish"'; do
+    write_proposed "$s"
+    cp docs/adr/000003-p.md "$TMP/before.md"
+    run_script adr-create.sh --accept 000003-p.md
+    assert_failure 4
+    diff "$TMP/before.md" docs/adr/000003-p.md
+  done
+}
+
+@test "--accept は ADR が無い、front matter が閉じていない、status か date の行が無いときも、書き換えずに終了コード 4 で止まる" {
+  run_script adr-create.sh --accept missing.md
+  assert_failure 4
+  mkdir -p docs/adr
+  printf -- '---\nstatus: "proposed"\ndate: 2020-01-01\n' >docs/adr/000001-open.md
+  printf -- '---\nstatus: "proposed"\n---\n' >docs/adr/000002-nodate.md
+  printf -- '---\ndate: 2020-01-01\n---\n' >docs/adr/000004-nostatus.md
+  printf '# plain\n' >docs/adr/000005-plain.md
+  for f in 000001-open 000002-nodate 000004-nostatus 000005-plain; do
+    cp "docs/adr/$f.md" "$TMP/before.md"
+    run_script adr-create.sh --accept "$f.md"
+    assert_failure 4
+    diff "$TMP/before.md" "docs/adr/$f.md"
+  done
+}
+
+@test "--accept --dry-run は書き換えない" {
+  write_proposed
+  cp docs/adr/000003-p.md "$TMP/before.md"
+  run_script adr-create.sh --accept 000003-p.md --dry-run
+  assert_success
+  assert_equal "$(jq -c '[.status, .dry_run]' <<<"$output")" '["accepted",true]'
+  diff "$TMP/before.md" docs/adr/000003-p.md
+}
+
+@test "--accept は --issue・--name・--template・--supersedes と一緒には使えず、--date の誤りも止める（終了コード 64）" {
+  write_proposed
+  run_script adr-create.sh --accept 000003-p.md --issue 3
+  assert_failure 64
+  run_script adr-create.sh --accept 000003-p.md --supersedes 000003-p.md
+  assert_failure 64
+  run_script adr-create.sh --accept 000003-p.md --date 2026-02-30
+  assert_failure 64
+  assert_equal "$(sed -n 2p docs/adr/000003-p.md)" 'status: "proposed"'
+}
+
+@test "--accept は改行が \r\n で先頭に BOM がある ADR も採択でき、2行の改行と、ほかの行はそのまま残す" {
+  mkdir -p docs/adr
+  printf -- '\357\273\277---\r\nstatus: "proposed"\r\ndate: 2020-01-01\r\n---\r\n\r\n# 題\r\nstatus: 本文の行\r\n' >docs/adr/000003-p.md
+  run_script adr-create.sh --accept 000003-p.md --date 2026-10-11
+  assert_success
+  printf -- '\357\273\277---\r\nstatus: "accepted"\r\ndate: 2026-10-11\r\n---\r\n\r\n# 題\r\nstatus: 本文の行\r\n' >"$TMP/expected"
+  run cmp "$TMP/expected" docs/adr/000003-p.md
+  assert_success
+}

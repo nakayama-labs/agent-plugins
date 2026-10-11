@@ -1113,3 +1113,11 @@ has() {
   grep -q '既存の Issue に「着手して」と言ったときは、もう一度聞きません' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/defaults/task-flow.md" || fail "task-flow.md に既存の Issue の扱いがありません"
   grep -q '起票した後に着手するか（着手まで頼まれていないとき）' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書の確認を取る操作の列にありません"
 }
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "adr-create は、proposed の ADR の採択を adr-create.sh --accept で行い、proposed でなければ止まることを書く（#379）" {
+  adr="$SKILLS/adr-create/SKILL.md"
+  has "adr-create の手順3" "$(step "$adr" 3)" '`adr-create.sh --accept <ADR>' '`proposed` でなければ、何も書き換えずに終了コード 4 で止まる'
+  grep -qF '`adr-create.sh --accept <ADR>`' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、--accept がありません"
+  grep -qF '`adr-create.sh --accept`' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md" || fail "テンプレートの README に、--accept がありません"
+}
