@@ -27,7 +27,7 @@ load test_helper
 #
 # 偽の gh。
 # - gh pr view [番号] --json ...   $FIX/pr-view.json を返す
-# - gh api graphql                クエリに PrWatch があれば $FIX/watch.json、無ければ（PrThreads）$FIX/PrThreads.json を返す
+# - gh api graphql                クエリに PrQueue があれば（common.sh の dw_merge_queue_state）$FIX/queue.json、PrWatch があれば $FIX/watch.json、無ければ（PrThreads）$FIX/PrThreads.json を返す
 # - それ以外（書き込みを含む）は、$CALLS に「WRITE <引数>」を記録して失敗する
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -42,7 +42,9 @@ case "$1 $2" in
   "pr view") echo "READ pr view" >>"$CALLS"; cat "$FIX/pr-view.json" ;;
   "api graphql")
     body="$(cat)"
-    if [ "$(jq -r '.query | contains("query PrWatch")' <<<"$body")" = true ]; then
+    if [ "$(jq -r '.query | contains("query PrQueue")' <<<"$body")" = true ]; then
+      echo "READ PrQueue $(jq -r .variables.url <<<"$body")" >>"$CALLS"; cat "$FIX/queue.json"
+    elif [ "$(jq -r '.query | contains("query PrWatch")' <<<"$body")" = true ]; then
       echo "READ PrWatch $(jq -r .variables.url <<<"$body")" >>"$CALLS"; cat "$FIX/watch.json"
     else
       echo "READ PrThreads" >>"$CALLS"; cat "$FIX/PrThreads.json"
@@ -58,6 +60,7 @@ SH
   : >"$FIX/threads"
   pr_view '{}'
   watch '{}'
+  queue_state '{}'
   write_threads
 }
 
@@ -72,7 +75,13 @@ pr_view() {
 # 既定は、2026-10-01T00:00:00Z に作った、フォークでなく、キューにも入っていない、レビューの無い PR
 watch() {
   jq -n "$1 as \$o | "'{data: {resource: ({createdAt: "2026-10-01T00:00:00Z", isCrossRepository: false,
-    mergeQueueEntry: null, reviews: {nodes: []}} + $o)}}' >"$FIX/watch.json"
+    reviews: {nodes: []}} + $o)}}' >"$FIX/watch.json"
+}
+
+# GraphQL（PrQueue。dw_merge_queue_state が読むマージキューの状態）の応答を作る。使い方: queue_state <既定の値に上書きするオブジェクト（jq の式）>
+# 既定は、キューが有効で、キューに並んでおらず、キューの出入りのイベントも無い。今は 2026-10-01T00:10:00Z（PR_WATCH_NOW）
+queue_state() {
+  jq -n "$1 as \$o | "'{data: {resource: ({isMergeQueueEnabled: true, mergeQueueEntry: null, timelineItems: {nodes: []}} + $o)}}' >"$FIX/queue.json"
 }
 
 # スレッドを1つ足す（write_threads で応答にする）。コメントは [[投稿者, 本文], ...]
@@ -127,9 +136,36 @@ expect() {
 
 @test "表: マージキューに入っている PR は wait で in_merge_queue（CI が実行中でも）" {
   setup_fake_gh
-  watch '{mergeQueueEntry: {state: "QUEUED"}}'
+  queue_state '{mergeQueueEntry: {state: "QUEUED", position: 1}}'
   pr_view "{statusCheckRollup: [{__typename: \"CheckRun\", name: \"t\", status: \"IN_PROGRESS\"}]}"
   expect wait '["in_merge_queue"]'
+}
+
+# pr-merge-status.sh・branch-status.sh と同じ判定（dw_merge_queue_state の queued）にそろえる（#381）
+@test "表: キューに入れた直後（まだ mergeQueueEntry に出ていない）も、merged で外れた直後（PR がまだ OPEN）も、wait で in_merge_queue" {
+  setup_fake_gh
+  pr_view "{statusCheckRollup: [{__typename: \"CheckRun\", name: \"t\", status: \"IN_PROGRESS\"}]}"
+  # 5 分前（00:05）に入れたイベントだけがある
+  queue_state '{timelineItems: {nodes: [{__typename: "AddedToMergeQueueEvent", createdAt: "2026-10-01T00:05:00Z"}]}}'
+  expect wait '["in_merge_queue"]'
+  # merged の理由で外れた（マージの直前）
+  queue_state '{timelineItems: {nodes: [{__typename: "AddedToMergeQueueEvent", createdAt: "2026-10-01T00:05:00Z"}, {__typename: "RemovedFromMergeQueueEvent", reason: "merged", createdAt: "2026-10-01T00:09:00Z"}]}}'
+  expect wait '["in_merge_queue"]'
+}
+
+@test "表: キューから外れたままの PR と、入れてから待つ時間を過ぎても並びに出ない PR は、キューの外として扱う。キューが無効なら並んでいても外" {
+  setup_fake_gh
+  pr_view '{}'
+  queue_state '{timelineItems: {nodes: [{__typename: "AddedToMergeQueueEvent", createdAt: "2026-10-01T00:01:00Z"}, {__typename: "RemovedFromMergeQueueEvent", reason: "merge_conflict", createdAt: "2026-10-01T00:02:00Z"}]}}'
+  expect idle '["nothing_to_do"]'
+  # 入れてから 10 分以上たっても並びに出ていない
+  queue_state '{timelineItems: {nodes: [{__typename: "AddedToMergeQueueEvent", createdAt: "2026-09-30T23:50:00Z"}]}}'
+  run_script pr-watch.sh --pr 5
+  assert_success
+  assert_output --partial "warn: マージキューに入れたイベントの後"
+  assert_equal "$(grep -v '^warn: ' <<<"$output" | jq -c '[.action, .reasons]')" '["idle",["nothing_to_do"]]'
+  queue_state '{isMergeQueueEnabled: false, mergeQueueEntry: {state: "QUEUED", position: 1}}'
+  expect idle '["nothing_to_do"]'
 }
 
 @test "表: コンフリクト（CONFLICTING・DIRTY）は conflict で conflicting" {
@@ -328,7 +364,8 @@ expect_check() {
   watch '{isCrossRepository: true}'
   pr_view "{statusCheckRollup: [$failed]}"
   expect_check idle '["fork"]' true
-  watch '{mergeQueueEntry: {state: "QUEUED"}}'
+  watch '{}'
+  queue_state '{mergeQueueEntry: {state: "QUEUED", position: 1}}'
   pr_view "{comments: [$bob_c]}"
   expect_check wait '["in_merge_queue"]' true
 }
@@ -409,6 +446,14 @@ expect_check() {
   assert_output --partial "PR #5 のマージキューの状態を読めません"
 }
 
+@test "PrQueue の GraphQL 呼び出しが失敗したら、理由を1行で伝えて止まる（キューの外とはみなさない）" {
+  setup_fake_gh
+  rm "$FIX/queue.json"
+  run_script pr-watch.sh --pr 5
+  assert_failure 1
+  assert_output --partial "PR #5 のマージキューの状態を読めません: "
+}
+
 @test "不明な引数は 64 で止まり、--help は使い方を出して 0 で終わる" {
   setup_fake_gh
   run_script pr-watch.sh --bogus
@@ -423,8 +468,9 @@ expect_check() {
   setup_fake_gh
   run_script pr-watch.sh --pr 5
   assert_success
-  run grep '^READ PrWatch ' "$CALLS"
-  assert_output "READ PrWatch $(jq -r .url "$FIX/pr-view.json")"
+  run grep '^READ Pr\(Watch\|Queue\) ' "$CALLS"
+  assert_line "READ PrWatch $(jq -r .url "$FIX/pr-view.json")"
+  assert_line "READ PrQueue $(jq -r .url "$FIX/pr-view.json")"
 }
 
 @test "指摘やコメントの本文が長くても（引数の長さの上限の 128 KiB を超えても）止まらない" {
