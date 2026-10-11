@@ -66,6 +66,14 @@ write_threads() {
   : >"$FIX/threads"
 }
 
+# レビュー・PR のコメントの編集の時刻（lastEditedAt）を、スレッドの GraphQL の応答（PrThreads.json）に足す。write_threads の後に呼ぶ。
+# 使い方: last_edited <レビューか PR のコメントの id> <時刻>
+last_edited() {
+  jq -c --arg id "$1" --arg t "$2" '.data.repository.pullRequest.comments.nodes += [{id: $id, lastEditedAt: $t}]' \
+    "$FIX/PrThreads.json" >"$FIX/PrThreads.json.new"
+  mv "$FIX/PrThreads.json.new" "$FIX/PrThreads.json"
+}
+
 called() { grep -c "^$1 " "$CALLS" || true; }
 args() { grep "^$1 " "$CALLS" | sed -n "${2:-1}p" | cut -d' ' -f2-; }
 out_of() { jq -c "$1" <<<"$output"; }
@@ -182,7 +190,7 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_success
   assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":0,"comments":0},false]'
   assert_equal "$(out_of '[.feedback[] | .reviews[], .comments[] | [.id, .replied, .needs_attention]]')" \
-    '[["C1",true,false],["R3",false,false],["R1",true,false],["R2",true,false]]'
+    '[["C1",true,false],["R3",false,false],["R1",true,false],["R2",false,false]]'
 }
 
 @test "変更の要求は、本文が無くても、返事をしていなければ needs_attention が true。返事の後に付いたレビュー・コメントは、新しく返事をしていないものになる" {
@@ -195,6 +203,59 @@ out_of() { jq -c "$1" <<<"$output"; }
       {id: "C2", author: {login: "alice"}, body: "まだ直っていません", createdAt: "2026-10-01T00:00:07Z", url: "u2"}]}'
   run_script pr-feedback.sh
   assert_success
+  assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":0,"comments":1},true]'
+}
+
+@test "本文の無い変更の要求は、作者が別の相手に PR のコメントを書いても返事済みにならず、変更の要求のあいだ needs_attention が true（#357）" {
+  setup_fake_gh
+  pr_view '{
+    reviewDecision: "CHANGES_REQUESTED",
+    reviews: [{id: "R1", author: {login: "reviewer"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}}],
+    comments: [{id: "C1", author: {login: "me"}, body: "@alice 答えました", createdAt: "2026-10-01T00:00:05Z", url: "u1"}]}'
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.counts.unanswered, .needs_attention, (.feedback[0].reviews[0] | [.replied, .needs_attention])]')" \
+    '[{"threads":0,"reviews":1,"comments":0},true,[false,true]]'
+  # 変更の要求が解けた（承認された）後の古い変更の要求は、数えない
+  pr_view '{
+    reviewDecision: "APPROVED",
+    reviews: [{id: "R1", author: {login: "reviewer"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}}],
+    comments: [{id: "C1", author: {login: "me"}, body: "直しました", createdAt: "2026-10-01T00:00:05Z", url: "u1"}]}'
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.needs_attention, (.feedback[0].reviews[0] | [.replied, .needs_attention])]')" '[false,[false,false]]'
+}
+
+@test "返事の後に編集されたレビュー本文・PR のコメントは、返事済みにならず、needs_attention が true（#357）" {
+  setup_fake_gh
+  pr_view '{
+    reviews: [{id: "R1", author: {login: "bot"}, state: "COMMENTED", body: "指摘（後で足された）", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}}],
+    comments: [
+      {id: "C1", author: {login: "bot"}, body: "要約（後で更新）", createdAt: "2026-10-01T00:00:02Z", url: "u1"},
+      {id: "C2", author: {login: "bob"}, body: "編集されていない質問", createdAt: "2026-10-01T00:00:03Z", url: "u2"},
+      {id: "C3", author: {login: "me"}, body: "直しました", createdAt: "2026-10-01T00:00:05Z", url: "u3"}]}'
+  # 返事の前の編集（C3 より前）は、返事済みのまま。返事の後の編集（R1・C1）は、返事をしていないものに戻る
+  write_threads
+  last_edited R1 2026-10-01T00:00:09Z
+  last_edited C1 2026-10-01T00:00:09Z
+  last_edited C2 2026-10-01T00:00:04Z
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.feedback[] | .reviews[], .comments[] | [.id, .replied, .needs_attention]]')" \
+    '[["C2",true,false],["R1",false,true],["C1",false,true]]'
+  assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":1,"comments":1},true]'
+}
+
+@test "時刻が null のレビュー・PR のコメントは、作者のコメントがあっても返事済みにならない（#357）" {
+  setup_fake_gh
+  pr_view '{
+    reviews: [{id: "R1", author: {login: "reviewer"}, state: "COMMENTED", body: "提出前の指摘", submittedAt: null, commit: {oid: "abc"}}],
+    comments: [
+      {id: "C1", author: {login: "bob"}, body: "時刻の無い質問", createdAt: null, url: "u1"},
+      {id: "C2", author: {login: "me"}, body: "直しました", createdAt: "2026-10-01T00:00:05Z", url: "u2"}]}'
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.feedback[] | .reviews[], .comments[] | [.id, .replied, .needs_attention]]')" '[["C1",false,true],["R1",false,true]]'
   assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":1,"comments":1},true]'
 }
 

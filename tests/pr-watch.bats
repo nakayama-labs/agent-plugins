@@ -85,6 +85,14 @@ write_threads() {
   : >"$FIX/threads"
 }
 
+# レビュー・PR のコメントの編集の時刻（lastEditedAt）を、スレッドの GraphQL の応答（PrThreads.json）に足す。write_threads の後に呼ぶ。
+# 使い方: last_edited <レビューか PR のコメントの id> <時刻>
+last_edited() {
+  jq -c --arg id "$1" --arg t "$2" '.data.repository.pullRequest.comments.nodes += [{id: $id, lastEditedAt: $t}]' \
+    "$FIX/PrThreads.json" >"$FIX/PrThreads.json.new"
+  mv "$FIX/PrThreads.json.new" "$FIX/PrThreads.json"
+}
+
 check_ok() { echo '{__typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS", workflowName: "CI", detailsUrl: "u"}'; }
 
 # 実行して、action と reasons を確かめる。使い方: expect <action> <reasons の JSON>
@@ -162,7 +170,11 @@ expect() {
 
 @test "表: 変更の要求か本文のあるレビューは、作者のコメントが後に無ければ act で unanswered_reviews" {
   setup_fake_gh
-  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}]}'
+  pr_view '{reviewDecision: "CHANGES_REQUESTED", reviews: [{id: "R1", author: {login: "alice"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}]}'
+  expect act '["unanswered_reviews"]'
+  # 本文の無い変更の要求は、作者が後で別の相手にコメントしても、変更の要求のあいだは act のまま（#357）
+  pr_view '{reviewDecision: "CHANGES_REQUESTED", reviews: [{id: "R1", author: {login: "alice"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}],
+    comments: [{id: "C1", author: {login: "me"}, body: "@bob 答えました", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
   expect act '["unanswered_reviews"]'
   pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "質問です", submittedAt: "2026-10-01T00:05:00Z"}]}'
   expect act '["unanswered_reviews"]'
@@ -174,6 +186,25 @@ expect() {
   pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:05:00Z"},
     {id: "R2", author: {login: "alice"}, state: "COMMENTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}]}'
   expect idle '["nothing_to_do"]'
+}
+
+@test "表: 返事の後に編集されたレビュー本文・PR のコメント、時刻が null のものは act（#357）" {
+  setup_fake_gh
+  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "質問です", submittedAt: "2026-10-01T00:05:00Z"}],
+    comments: [{id: "C1", author: {login: "me"}, body: "答えました", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
+  write_threads
+  expect idle '["nothing_to_do"]'
+  last_edited R1 2026-10-01T00:07:00Z
+  expect act '["unanswered_reviews"]'
+  pr_view '{comments: [{id: "C1", author: {login: "bob"}, body: "なぜ？", createdAt: "2026-10-01T00:05:00Z", url: "u"},
+    {id: "C2", author: {login: "me"}, body: "理由です", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
+  write_threads
+  last_edited C1 2026-10-01T00:07:00Z
+  expect act '["unanswered_comments"]'
+  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "質問です", submittedAt: null}],
+    comments: [{id: "C2", author: {login: "me"}, body: "別の話です", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
+  write_threads
+  expect act '["unanswered_reviews"]'
 }
 
 @test "表: 作者以外の PR のコメントは、作者のコメントが後に無ければ act で unanswered_comments" {

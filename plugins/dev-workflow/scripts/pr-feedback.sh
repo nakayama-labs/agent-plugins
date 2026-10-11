@@ -13,15 +13,28 @@
 #   handlers   設定の pr_check.handlers（投稿者 → 担当する skill の名前）
 #   feedback   投稿者ごとの配列。author・handler（担当する skill。無ければ null）・threads・reviews・comments
 #     threads   resolved でないスレッド。id（先頭のコメントの ID。返信に使う）・path・line・outdated・url・
-#               comments（author・body・created_at・url）・replied（スレッドの持ち主の最後のコメントの後に、
-#               PR の作者が書いたか。持ち主の返事待ち）・needs_attention（replied でない。返事をしていない）
+#               comments（author・body・created_at・url）・replied・needs_attention
 #     reviews   レビュー。本文のあるものと、承認（APPROVED）・変更の要求（CHANGES_REQUESTED）。id・state・body・submitted_at・commit・
-#               replied（その後に PR の作者の PR のコメントがあるか）・needs_attention（replied でなく、本文があるか変更の要求。返事をしていない）
-#     comments  PR のコメント（スレッドの外）。id・body・created_at・url・replied（reviews と同じ）・needs_attention（replied でない）
+#               replied・needs_attention
+#     comments  PR のコメント（スレッドの外）。id・body・created_at・url・replied・needs_attention
 #   own_comments  PR の作者の PR のコメント（id・body・created_at・url）。どのコメントに返信済みかの判断に使う
-#   counts     threads・reviews・comments の合計と、unanswered（needs_attention が true のものの、threads・reviews・comments の件数）
-#   needs_attention  返事をしていないものが1つでもあるか（counts.unanswered のどれかが 1 以上）。true なら対応なしで終えない目印で、
-#                    false でも対応が要らないとは限らない（下の決まり）。CI の失敗は含めない（checks を見る）
+#   counts     threads・reviews・comments の合計と、unanswered（下の「意味」）
+#   needs_attention  返事をしていないものが1つでもあるか（下の「意味」）
+#
+# 意味（needs_attention・replied・counts.unanswered の正本。SKILL.md・設計書・README は、ここを参照するだけにして、意味を書き写さない）:
+#   replied          返事が済んでいるか。
+#                    - スレッド：スレッドの持ち主（PR の作者以外で、決まりの規則で選んだ書き手）の最後のコメントの後に、PR の作者が書いている
+#                      （持ち主の返事待ち）
+#                    - レビュー本文・PR のコメント：作成・提出の時刻の後に PR の作者の PR のコメントがあり、かつ、その後に編集されていない
+#                      （時刻だけで決めた目安で、誰への返事かは見ない。対応済みにするかは AI が own_comments と照らして決める）。
+#                      時刻が無いもの（submitted_at・created_at が null）、返事の後に編集されたもの、本文の無い変更の要求は、
+#                      返事済みにしない
+#   needs_attention  項目ごとの「返事をしていない」目印。スレッドとコメントは replied でないこと。レビューは、replied でなく、
+#                    本文があるか変更の要求であること（本文の無い承認は数えない）。本文の無い変更の要求は、返事で済ませられないので、
+#                    pr.review_decision が CHANGES_REQUESTED のあいだ true になる
+#   counts.unanswered  needs_attention が true の項目の件数（threads・reviews・comments ごと）
+#   needs_attention（トップレベル）  counts.unanswered のどれかが 1 以上か。true なら対応なしで終えない目印。false でも対応が要らない
+#                    とは限らない（replied は目安で、返事待ちの項目もある）。CI の失敗は含めない（checks を見る）
 #
 # 決まり:
 #   - PR の作者のレビュー・コメントは feedback に数えない（自分の返信やメモなので。コメントは own_comments に出す）。
@@ -30,11 +43,10 @@
 #     （書いた順番によらない。bot のスレッドに人が質問を書いたとき、bot の担当の skill は人のコメントを扱わないので、
 #     bot の分にすると誰も答えない）。作者以外の書き手がすべて担当のある投稿者なら、その中で最後に書いた人の分にする
 #   - 投稿者と handlers のキーは、大文字と小文字、末尾の [bot] を区別せずに照らす（gh は some-bot[bot] を some-bot と返す）
-#   - 返事をしていないか（needs_attention）は、投稿者の名前によらず、時刻だけで決める。diff の外の指摘はレビュー本文にあってスレッドが無く、
-#     counts.threads に現れないので、スレッドの件数だけで「未解決なし」と決めない（#279）。レビュー本文・PR のコメントは、
-#     その後に PR の作者が PR のコメントを書いていれば返事済み（replied）とする（時刻だけの目安で、誰への返事かは見ない。
-#     対応済みかの見分けは AI が own_comments で行う）。変更の要求は、本文が無くてもマージを妨げるので、返事が無ければ
-#     needs_attention を true にする。本文の無い承認は数えない
+#   - 返事をしていないか（needs_attention）は、投稿者の名前によらず、時刻だけで決める（意味は上の「意味」）。diff の外の指摘は
+#     レビュー本文にあってスレッドが無く、counts.threads に現れないので、スレッドの件数だけで「未解決なし」と決めない（#279）
+#   - 編集の時刻（lastEditedAt）は gh pr view に無いので、スレッドと同じ GraphQL の呼び出しで、新しい方の 100 件のレビュー・PR の
+#     コメントについて読む（bot は、後の push で同じコメントを編集して指摘を足すことがあり、作成の時刻は変わらないため。#357）
 #   - スレッドの resolved の状態は gh にも REST にも無いので、そこだけ GraphQL で読む（設計書 §10）。
 #     1つのスレッドのコメントは先頭の 100 件まで読む
 set -euo pipefail
@@ -85,6 +97,8 @@ nwo="$(gh repo view --json nameWithOwner -q .nameWithOwner)" || dw_die "リポ�
 # shellcheck disable=SC2016
 query='query PrThreads($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    comments(last: 100) { nodes { id lastEditedAt } }
+    reviews(last: 100) { nodes { id lastEditedAt } }
     reviewThreads(first: 100, after: $after) {
       pageInfo { hasNextPage endCursor }
       nodes {
@@ -94,13 +108,16 @@ query='query PrThreads($owner: String!, $name: String!, $number: Int!, $after: S
     }
   } }
 }'
-threads='[]' after=""
+threads='[]' after="" edits='{}'
 while :; do
   vars="$(jq -nc --arg o "${nwo%%/*}" --arg n "${nwo#*/}" --argjson num "$number" --arg a "$after" \
     '{owner: $o, name: $n, number: $num} + (if $a == "" then {} else {after: $a} end)')"
   page="$(dw_gql "$query" "$vars" 2>&1)" || dw_die "PR #${number} のスレッドを読めません: $page"
   jq -e '.data.repository.pullRequest.reviewThreads' >/dev/null 2>&1 <<<"$page" \
     || dw_die "PR #${number} のスレッドを読めません: $page"
+  # 編集の時刻（id → lastEditedAt）は、どのページにも同じものが付いてくるので、最初のページのものを使う
+  [ -n "$after" ] || edits="$(jq -c '[.data.repository.pullRequest | ((.comments.nodes // [])[], (.reviews.nodes // [])[])
+    | select(.lastEditedAt != null) | {key: .id, value: .lastEditedAt}] | from_entries' <<<"$page")"
   # スレッドの本文は長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
   threads="$(printf '%s\n' "$threads" "$page" \
     | jq -sc '.[0] + [.[1].data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)]')"
@@ -115,9 +132,11 @@ done
 # PR とスレッドは本文を含んで長くなりうるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
 # jq の変数（$h など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-printf '%s\n' "$view" "$threads" | jq -s --argjson handlers "$handlers" "$DW_JQ_LOGIN_NORM"'
+printf '%s\n' "$view" "$threads" "$edits" | jq -s --argjson handlers "$handlers" "$DW_JQ_LOGIN_NORM"'
   def login: (.author.login // "ghost");
-  .[0] as $v | .[1] as $threads
+  # レビュー・PR のコメントが、時刻 $t より後に編集されたか（編集の時刻は .[2] の id → lastEditedAt）
+  def edited_after($edits; $t): (($edits[.id // ""] // "") > $t);
+  .[0] as $v | .[1] as $threads | .[2] as $edits
   | ($v.author.login // "" | norm) as $me
   | ($handlers | to_entries | map({key: (.key | norm), value}) | from_entries) as $h
 
@@ -146,18 +165,22 @@ printf '%s\n' "$view" "$threads" | jq -s --argjson handlers "$handlers" "$DW_JQ_
       | ($me_at > $by_at) as $replied
       | {author: $by.author, item: {id: .comments[0].id, path, line, outdated, url: .comments[0].url,
           comments: [.comments[] | del(.id)], replied: $replied, needs_attention: ($replied | not)}}] as $t
-  # PR の作者の PR のコメントの、最後の時刻（無ければ ""）。レビュー本文・PR のコメントは、これより前なら返事済みとする
+  # PR の作者の PR のコメントの、最後の時刻（無ければ ""）。レビュー本文・PR のコメントは、この時刻以前に作られ、
+  # この時刻より後に編集されていなければ、返事済みとする。時刻が null のものは返事済みにしない
   | ([($v.comments // [])[] | select((login | norm) == $me) | .createdAt] | max // "") as $last_own
   | [($v.reviews // [])[]
       | select((login | norm) != $me)
       | select((.body // "") != "" or (.state | IN("APPROVED", "CHANGES_REQUESTED")))
-      | ($last_own != "" and .submittedAt <= $last_own) as $replied
+      | (.body // "") as $body
+      | ($body == "" and .state == "CHANGES_REQUESTED") as $bodyless_cr
+      | (($bodyless_cr | not) and $last_own != "" and .submittedAt != null and .submittedAt <= $last_own and (edited_after($edits; $last_own) | not)) as $replied
       | {author: login, item: {id, state, body: (.body // ""), submitted_at: .submittedAt, commit: (.commit.oid // null),
           replied: $replied,
-          needs_attention: (($replied | not) and ((.body // "") != "" or .state == "CHANGES_REQUESTED"))}}] as $r
+          needs_attention: (if $bodyless_cr then ($v.reviewDecision == "CHANGES_REQUESTED")
+                            else (($replied | not) and $body != "") end)}}] as $r
   | [($v.comments // [])[]
       | select((login | norm) != $me)
-      | ($last_own != "" and .createdAt <= $last_own) as $replied
+      | ($last_own != "" and .createdAt != null and .createdAt <= $last_own and (edited_after($edits; $last_own) | not)) as $replied
       | {author: login, item: {id, body, created_at: .createdAt, url, replied: $replied, needs_attention: ($replied | not)}}] as $c
   | {threads: ([$t[] | select(.item.needs_attention)] | length),
      reviews: ([$r[] | select(.item.needs_attention)] | length),
