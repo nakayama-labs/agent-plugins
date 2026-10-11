@@ -9,6 +9,7 @@ load test_helper
 # gh label list はリポジトリにある今のラベルとして FAKE_LABELS（既定: プラグインの定義のラベルすべて）を返す。
 # gh api --paginate repos/{owner}/{repo}/rules/branches/<ブランチ> は、パスを FAKE_RULES_LOG のファイル（あれば）に書き、FAKE_RULES（ブランチに効いているルール。ページごとの配列を並べる）を返す。
 # FAKE_RULES が無ければ失敗する（問い合わせられないとき）。
+# gh api graphql は、マージキューの有無（repository.mergeQueue）として、FAKE_MERGE_QUEUE が true ならあり、false ならなし、無ければルールセットにキューがあるか（FAKE_RULES）で返す（FAKE_MERGE_QUEUE_FAIL があれば失敗する）。
 # gh api repos/{owner}/{repo}/branches/<ブランチ> は FAKE_BRANCH（ブランチの情報。古いブランチ保護を含む）を返し、無ければ失敗する。
 # base_branch のワークフロー（gh api repos/{owner}/{repo}/contents/.github/workflows?ref=...）は、$TMP/workflows/ の
 # ファイルの一覧を返し、ディレクトリが無ければ 404、FAKE_WORKFLOWS_FAIL があれば 403 で失敗する。ファイル（gh api -H ... .../contents/<パス>?ref=...）はそのファイルを返す。
@@ -32,6 +33,17 @@ case "$1 $2" in
     [ -n "${FAKE_RULES:-}" ] || exit 1
     if [ -n "${FAKE_RULES_LOG:-}" ]; then printf '%s\n' "$2" >"$FAKE_RULES_LOG"; fi
     printf '%s\n' "$FAKE_RULES"
+    ;;
+  "api graphql")
+    # マージキューの有無（repository.mergeQueue）。FAKE_MERGE_QUEUE_FAIL があれば失敗する。FAKE_MERGE_QUEUE が true ならキューがある
+    # （古いブランチ保護のキューのように、ルールには出ない）。ブランチを FAKE_MQ_LOG のファイル（あれば）に書く
+    [ -z "${FAKE_MERGE_QUEUE_FAIL:-}" ] || { echo 'gh: Resource not accessible (HTTP 403)' >&2; exit 1; }
+    for a in "$@"; do case "$a" in branch=*) [ -z "${FAKE_MQ_LOG:-}" ] || printf '%s\n' "${a#branch=}" >"$FAKE_MQ_LOG" ;; esac; done
+    # FAKE_MERGE_QUEUE が無ければ、ルールセットにキューがあるとき（FAKE_RULES に merge_queue）にだけ、キューがある
+    mq="${FAKE_MERGE_QUEUE:-}"
+    [ -n "$mq" ] || { case "${FAKE_RULES:-}" in *'"merge_queue"'*) mq=true ;; esac; }
+    if [ "$mq" = true ]; then echo '{"data": {"repository": {"mergeQueue": {"id": "MQ_1"}}}}'
+    else echo '{"data": {"repository": {"mergeQueue": null}}}'; fi
     ;;
   "api repos/{owner}/{repo}/branches/"*)
     [ -n "${FAKE_BRANCH:-}" ] || exit 1
@@ -393,6 +405,22 @@ merge_check() { jq -c '.checks[] | select(.name == "merge-queue") | [.ok, .level
   export FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true, "required_status_checks": [{"context": "ci"}]}}]'
   run_script doctor.sh
   assert_equal "$(merge_check)" '[true,"warn","main へのマージは、PR が最新の main を取り込んでいることを求めます（strict）"]'
+}
+
+@test "古いブランチ保護でキューを有効にしていて、ルールセットにキューが無くても、マージキューを通すと示す（#381）" {
+  fake_gh
+  export FAKE_SCOPES="project" FAKE_MERGE_QUEUE=true FAKE_MQ_LOG="$TMP/mq-branch"
+  export FAKE_RULES='[{"type": "pull_request", "parameters": {}}]'
+  export FAKE_BRANCH='{"protection": {"required_status_checks": {"contexts": ["ci"]}}}'
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(merge_check)" '[true,"warn","main へのマージはマージキューを通します"]'
+  assert_equal "$(cat "$TMP/mq-branch")" main
+  # キューの有無を GraphQL で読めなければ、ルールセットのキューで代える
+  export FAKE_MERGE_QUEUE_FAIL=1 FAKE_RULES='[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false, "required_status_checks": [{"context": "ci"}]}}, {"type": "merge_queue", "parameters": {}}]'
+  run_script doctor.sh
+  assert_success
+  assert_equal "$(merge_check)" '[true,"warn","main へのマージはマージキューを通します"]'
 }
 
 @test "必須のチェックがあるのにキューも strict も無ければ、止めずに repo-setup を知らせる" {

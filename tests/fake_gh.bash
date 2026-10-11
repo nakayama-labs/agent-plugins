@@ -23,6 +23,8 @@
 #                                   「api-rules <パス>」を $CALLS に記録し、ブランチに効いているルールとして $FIX/rules/<ブランチ>.json、
 #                                   無ければ $FIX/rules.json、それも無ければ [] を返す。<ブランチ> は、パスの URL エンコードを戻した
 #                                   ブランチ名そのままで、/ はディレクトリの区切りになる（release/v1 なら $FIX/rules/release/v1.json）
+# - gh api graphql（MergeQueueForBranch）  「api-merge-queue <ブランチ>」を $CALLS に記録し、$FIX/queue/<ブランチ>（/ はディレクトリの区切り）が
+#                                   あればそのブランチにマージキューがある（古いブランチ保護のキューも含む）として返す。無ければ無い
 # - gh api repos/.../issues/N/parent  「api-parent N」を $CALLS に記録し、$FIX/parent-N.json を返す（無ければ HTTP 404 で失敗する）
 # - gh api repos/.../activity?...   「api-activity <パス>」を $CALLS に記録し、$FIX/activity.json（無ければ []）を返す
 # - gh api repos/...                「api-get <パス>」を $CALLS に記録する。$FIX/remote-ref があれば {} を、無ければ HTTP 404 で失敗する
@@ -30,7 +32,7 @@
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json（変数 number があり $FIX/<操作名>-issue-<number>.json があればそれ）を返し、「<操作名> <変数>」を $CALLS に記録する
 # - gh project ・Project の REST     fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField など）
 # FAKE_GH_STDERR を指定すると、どの呼び出しでも、その文字列を標準エラーに出す（成功する呼び出しでも）。
-# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues・api-rules・api-parent・api-activity を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues・api-rules・api-merge-queue・api-parent・api-activity を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -166,6 +168,17 @@ case "$1 $2" in
     ;;
   "api user") echo '{"login": "me"}' | jq -r "$q" ;;
   "api graphql")
+    # マージキューの有無（common.sh の dw_merge_queue_for_branch）は、標準入力でなく -f branch=<ブランチ> で読む
+    case "$*" in *"query MergeQueueForBranch"*)
+      branch=""
+      for a in "$@"; do case "$a" in branch=*) branch="${a#branch=}" ;; esac; done
+      echo "api-merge-queue $branch" >>"$CALLS"
+      fail api-merge-queue
+      if [ -f "$FIX/queue/$branch" ]; then echo '{"data": {"repository": {"mergeQueue": {"id": "MQ_1"}}}}'
+      else echo '{"data": {"repository": {"mergeQueue": null}}}'; fi
+      exit 0
+      ;;
+    esac
     body="$(cat)"
     op="$(jq -r .query <<<"$body" | grep -oE '(query|mutation) [A-Za-z]+' | head -n 1 | cut -d' ' -f2)"
     echo "$op $(jq -c .variables <<<"$body")" >>"$CALLS"

@@ -193,7 +193,8 @@ fi
 
 # base_branch にマージキューと strict（最新の取り込みを求める）のどちらが効いているかを示す。どちらも無いと、
 # 古い base_branch で通った CI の結果のままマージして壊れることがある。組織のルールセットも含めて見るため、
-# ブランチに効いているルール（rules/branches）を読む。ブランチは、setup-repo.sh がルールセットで守るものと同じく、
+# ブランチに効いているルール（rules/branches）を読む。キューを使うかは、古いブランチ保護のキューも含めるため、ルールではなく
+# GraphQL の repository.mergeQueue で読む（ADR 000381。読めなければルールのキューで代える）。ブランチは、setup-repo.sh がルールセットで守るものと同じく、
 # チームの設定で決める（個人の設定は使わない）。GitHub に問い合わせられないときは飛ばす
 # 使えない値なら、設定の確認（base-branch）で知らせ、ここでは問い合わせずに飛ばす
 base_branch="$team_base"
@@ -202,11 +203,13 @@ base_branch="$team_base"
 if $gh_auth && [ -n "$repo_root" ] && [ -n "$base_branch" ] \
   && rules="$(dw_branch_rules '{owner}/{repo}' "$base_branch")" \
   && required="$(dw_required_checks "$rules" "$(dw_classic_required_checks '{owner}/{repo}' "$base_branch")" 2>/dev/null)" \
-  && merge="$(jq -ser --argjson required "$required" "$DW_JQ_CHECK_RULES$DW_JQ_MERGE_QUEUE"'
+  && { queue="$(dw_merge_queue_for_branch '{owner}/{repo}' "$base_branch" 2>/dev/null)" \
+    || queue="$(jq -s "$DW_JQ_MERGE_QUEUE"' add // [] | merge_queue' <<<"$rules" 2>/dev/null)"; } \
+  && merge="$(jq -ser --argjson required "$required" --argjson queue "$queue" "$DW_JQ_CHECK_RULES"'
     # --paginate はページごとに配列を出力するので、1つにまとめる
     add // []
     | if $required == [] then "no-checks"
-    elif merge_queue then "queue"
+    elif $queue then "queue"
     elif any(check_rules[]; .parameters.strict_required_status_checks_policy) then "strict"
     elif check_rules != [] then "none"
     else "classic" end' <<<"$rules" 2>/dev/null)"; then
