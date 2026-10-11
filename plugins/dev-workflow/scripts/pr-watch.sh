@@ -41,6 +41,7 @@
 # 決まり:
 #   - 対応が要る指摘（unresolved_threads・unanswered_reviews・unanswered_comments）は、pr-feedback.sh の
 #     counts.unanswered をそのまま使う（判定を1か所にまとめ、gh-pr-check と食い違わないようにする）
+#   - マージキューの状態は、OPEN で、下書きでなく、フォークでない PR のときだけ読む（それ以外は idle になるので、読めなくても止めない）
 #   - 材料は pr-feedback.sh の出力と、GraphQL で読む作成時刻・フォークか・レビューの投稿者（PR の URL から引く）、
 #     マージキューの状態（common.sh の dw_merge_queue_state。キューの中かは pr-merge-status.sh・branch-status.sh と同じ判定。
 #     入れた直後と、merged で外れた直後も、キューの中として扱う。ADR 000323・000381）
@@ -103,10 +104,12 @@ now="${PR_WATCH_NOW:-$(date -u +%s)}"
 # 今の時刻は PR_WATCH_NOW があればそれにそろえる（環境に残った DW_QUEUE_NOW には負けない。時計を 2 つにしない）
 [ -z "${PR_WATCH_NOW:-}" ] || export DW_QUEUE_NOW="$PR_WATCH_NOW"
 dw_check_queue_now
-# キューの状態は、結果に効くとき（OPEN で、下書きでなく、フォークでない PR）だけ読む。それ以外は idle になるので、
-# 読めなくても止めない（読まずに queued=false 相当にする）
+# 対象外の PR（not_open・draft・fork。判定の 1）は、ここで 1 か所に決め、下の jq でもこれを使う。
+# キューの状態は、対象の PR（idle_reason が空）のときだけ読む。対象外は idle になるので、読めなくても止めない（読まずに queued=false 相当にする）
+idle_reason="$(jq -r --argjson g "$(jq -c '.data.resource' <<<"$res")" \
+  'if .pr.state != "OPEN" then "not_open" elif .pr.draft then "draft" elif $g.isCrossRepository then "fork" else "" end' <<<"$fb")"
 mq='{"queued": false}'
-if jq -e --argjson g "$(jq -c '.data.resource' <<<"$res")" '.pr.state == "OPEN" and (.pr.draft | not) and ($g.isCrossRepository | not)' >/dev/null <<<"$fb"; then
+if [ -z "$idle_reason" ]; then
   qerr="$(mktemp)"
   mq="$(dw_merge_queue_state "$(jq -r .pr.url <<<"$fb")" "" true 2>"$qerr")" \
     || { reason="$(tail -n 1 "$qerr")"; rm -f "$qerr"; dw_die "PR #${number} のマージキューの状態を読めません: $reason"; }
@@ -117,7 +120,7 @@ fi
 # 指摘とコメントは本文を含んで長くなりうるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
 # jq の変数（$f など）を bash に展開させないため、シングルクォートで書く
 # shellcheck disable=SC2016
-printf '%s\n' "$fb" "$res" | jq -s --argjson mq "$mq" --argjson now "$now" --argjson wait_min "$review_wait_minutes" "$DW_JQ_LOGIN_NORM"'
+printf '%s\n' "$fb" "$res" | jq -s --argjson mq "$mq" --arg idle_reason "$idle_reason" --argjson now "$now" --argjson wait_min "$review_wait_minutes" "$DW_JQ_LOGIN_NORM"'
   .[0] as $f | .[1].data.resource as $g
   | ($f.pr) as $p
   # 対応が要る指摘の判定は pr-feedback.sh が決める（gh-pr-check と同じ判定にそろえる）
@@ -132,9 +135,7 @@ printf '%s\n' "$fb" "$res" | jq -s --argjson mq "$mq" --argjson now "$now" --arg
   | ($f.counts.awaiting) as $n_awaiting
   | ($p.merge_state) as $ms
   | ([if $n_awaiting > 0 then "awaiting_replies" else empty end, if $ms != "CLEAN" and $ms != "UNKNOWN" then "merge_blocked" else empty end]) as $notes
-  | (if $p.state != "OPEN" then {action: "idle", reasons: ["not_open"]}
-     elif $p.draft then {action: "idle", reasons: ["draft"]}
-     elif $g.isCrossRepository then {action: "idle", reasons: ["fork"]}
+  | (if $idle_reason != "" then {action: "idle", reasons: [$idle_reason]}
      elif $mq.queued then {action: "wait", reasons: ["in_merge_queue"]}
      elif $p.mergeable == "CONFLICTING" or $ms == "DIRTY" or $ms == "BEHIND" then
        {action: "conflict", reasons: ([if $p.mergeable == "CONFLICTING" or $ms == "DIRTY" then "conflicting" else empty end,
