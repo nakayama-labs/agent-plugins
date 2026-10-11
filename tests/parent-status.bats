@@ -439,3 +439,25 @@ SH
   assert_success
   assert_equal "$(moved)" "IT17,IT10,IT5,"
 }
+
+@test "親が読めない（/parent が 404 でも Issue の応答に parent_issue_url がある）ときは、親なしとは数えずに止まる（#347）" {
+  setup_fake_gh
+  # 17 → 10（読める）→ 10 の親は読めない
+  set_parent 17 10
+  jq -c '. + {parent_issue_url: "https://api.github.com/repos/other/private/issues/3"}' "$FIX/parent-17.json" >"$FIX/p.json"
+  mv "$FIX/p.json" "$FIX/parent-17.json"
+  run_script parent-state.sh --issue 17
+  assert_failure
+  assert_output --partial "#10 の親（https://api.github.com/repos/other/private/issues/3）を読めません"
+  # 最初の Issue の親が読めないときも同じ
+  rm -f "$FIX"/parent-*.json "$FIX"/issue-*.json
+  jq -nc '{number: 17, url: "https://api.github.com/repos/me/demo/issues/17", parent_issue_url: "https://api.github.com/repos/other/private/issues/3"}' >"$FIX/issue-17.json"
+  run_script parent-state.sh --issue 17
+  assert_failure
+  assert_output --partial "#17 の親"
+  # parent_issue_url が null なら、本当に親が無いので、止まらない
+  jq -nc '{number: 17, parent_issue_url: null}' >"$FIX/issue-17.json"
+  run_script parent-state.sh --issue 17
+  assert_success
+  assert_equal "$(jq -c '.parents' <<<"$output")" '[]'
+}

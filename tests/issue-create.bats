@@ -773,3 +773,21 @@ assert_no_changes() {
   refute_output --partial "Cannot index"
   assert_no_changes
 }
+
+@test "親やその上の親が読めない（/parent が 404 でも parent_issue_url がある）ときは、親なしとは数えず、何も作らずに止まる（#347）" {
+  setup_fake_gh
+  # 親（12）の親が読めない
+  issue_json me/demo 12 | jq -c '. + {parent_issue_url: "https://api.github.com/repos/other/private/issues/3"}' >"$FIX/issue-12.json"
+  run_create --title t --type feat --parent 12
+  assert_failure
+  assert_output --partial "#12 の親（https://api.github.com/repos/other/private/issues/3）を読めません"
+  assert_no_changes
+  # 親（12）の親（5）は読めるが、その上が読めない
+  : >"$CALLS"
+  existing_issue 12
+  issue_json me/demo 5 | jq -c '. + {parent_issue_url: "https://api.github.com/repos/other/private/issues/3"}' >"$FIX/parent-12.json"
+  run_create --title t --type feat --parent 12
+  assert_failure
+  assert_output --partial "#5 の親（https://api.github.com/repos/other/private/issues/3）を読めません"
+  assert_no_changes
+}
