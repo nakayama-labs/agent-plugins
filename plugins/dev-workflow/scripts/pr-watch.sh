@@ -10,8 +10,11 @@
 #   pr        number・url・state・draft・head_sha
 #   action    idle（何もしない）・wait（待つ）・act（対応する）・conflict（コンフリクトを直す）のどれか
 #   reasons   action の理由（文字列の配列。下の表）
-#   details   failed_checks（失敗したチェックの名前）・unanswered（対応が要る指摘の数。threads・reviews・comments）・
-#             waiting_for（最初のレビューを待っている投稿者）
+#   respond   gh-pr-check の手順1が、指摘・質問・CI の失敗の一覧（手順2以降）へ進むか（true）、何も変えずに終えるか（false）。
+#             OPEN の PR で、CI が失敗しているか、返事をしていない指摘があるか、返事待ちの項目がある（awaiting_replies が 1 以上）ときだけ true。
+#             action とは別に決める（action は無人の見回り用で、ドラフト・フォーク・キュー・コンフリクトの PR では指摘に触れないため）
+#   details   failed_checks（失敗したチェックの名前）・unanswered（返事をしていない指摘の数。threads・reviews・comments）・
+#             awaiting_replies（返事待ちの項目の数）・waiting_for（最初のレビューを待っている投稿者）
 #
 # 判定（上から順に最初に当てはまったもの。ただし act の理由は、当てはまるものをすべて並べる）:
 #   1. idle  not_open      PR が OPEN でない（マージ済み・閉じた）
@@ -29,6 +32,11 @@
 #                                  （PR を作ってから 60 分たつまで待つ。障害などで際限なく待たないため）
 #            mergeable_unknown     GitHub がマージできるかを計算中（mergeable が UNKNOWN）
 #   6. idle  nothing_to_do  上のどれでもない（CI が全部通るか無く、対応する指摘も無い）
+#
+#   5 と 6 の理由には、次のものを続けて足す（ユーザーに伝えることを表す。action は変えない）:
+#            awaiting_replies      返事待ちの項目がある（PR の作者が返事をして、相手の返事を待っている。スレッド、または本文のある
+#                                  か変更の要求のレビュー・PR のコメントで replied が true のもの。意味は pr-feedback.sh --help）
+#            merge_blocked         merge_state が CLEAN でない（BLOCKED など。コンフリクトと遅れは conflict で扱う）
 #
 # 決まり:
 #   - 対応が要る指摘（unresolved_threads・unanswered_reviews・unanswered_comments）は、pr-feedback.sh の
@@ -102,7 +110,10 @@ printf '%s\n' "$fb" "$res" | jq -s --argjson now "$now" --argjson wait_min "$rev
   | ([$g.reviews.nodes[].author.login // empty | norm] + [$f.feedback[].author | norm]) as $arrived
   | (($now - ($g.createdAt | fromdateiso8601)) < ($wait_min * 60)) as $in_wait_window
   | (if $in_wait_window then [$f.handlers | keys[] | select(norm as $k | $arrived | index($k) | not)] else [] end) as $waiting_for
+  # 返事待ちの項目（pr-feedback.sh の replied が true のもの。本文の無い承認は数えない）
+  | ([$f.feedback[] | (.threads[], .comments[], (.reviews[] | select(.body != "" or .state == "CHANGES_REQUESTED"))) | select(.replied)] | length) as $n_awaiting
   | ($p.merge_state) as $ms
+  | ([if $n_awaiting > 0 then "awaiting_replies" else empty end, if $ms != "CLEAN" and $ms != "UNKNOWN" then "merge_blocked" else empty end]) as $notes
   | (if $p.state != "OPEN" then {action: "idle", reasons: ["not_open"]}
      elif $p.draft then {action: "idle", reasons: ["draft"]}
      elif $g.isCrossRepository then {action: "idle", reasons: ["fork"]}
@@ -118,10 +129,12 @@ printf '%s\n' "$fb" "$res" | jq -s --argjson now "$now" --argjson wait_min "$rev
      elif $f.checks.state == "pending" or ($waiting_for | length) > 0 or $p.mergeable == "UNKNOWN" then
        {action: "wait", reasons: ([if $f.checks.state == "pending" then "ci_pending" else empty end,
                                    ($waiting_for[] | "awaiting_review:" + .),
-                                   if $p.mergeable == "UNKNOWN" then "mergeable_unknown" else empty end])}
-     else {action: "idle", reasons: ["nothing_to_do"]} end) as $d
+                                   if $p.mergeable == "UNKNOWN" then "mergeable_unknown" else empty end] + $notes)}
+     else {action: "idle", reasons: (["nothing_to_do"] + $notes)} end) as $d
   | {pr: {number: $p.number, url: $p.url, state: $p.state, draft: $p.draft, head_sha: $p.head_sha},
      action: $d.action, reasons: $d.reasons,
+     respond: ($p.state == "OPEN" and ($f.checks.state == "failure" or $n_threads > 0 or $n_reviews > 0 or $n_comments > 0 or $n_awaiting > 0)),
      details: {failed_checks: [$f.checks.failed[].name],
                unanswered: {threads: $n_threads, reviews: $n_reviews, comments: $n_comments},
+               awaiting_replies: $n_awaiting,
                waiting_for: $waiting_for}}'
