@@ -4,6 +4,7 @@
 adr-create.bats	8
 adr-list.bats	11
 auto-check.bats	11
+auto-findings.bats	3
 auto-hold.bats	5
 branch-name.bats	5
 branch-plan.bats	6

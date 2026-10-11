@@ -951,6 +951,40 @@ has() {
   done
 }
 
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-auto は、範囲外の指摘をファイルに記録し、PR を作る前に auto-findings.sh で検査する（#378）" {
+  f="$SKILLS/task-auto/SKILL.md"
+  has "task-auto の手順5" "$(step "$f" 5)" '**範囲外の指摘の記録**' 'task-auto-<実行の id>-findings.json' '`filed`' '`duplicate`' '`breaking`' '`limit`' '`failed`' \
+    '範囲外の指摘が1件も無ければ `[]` を書く'
+  s6="$(step "$f" 6)"
+  has "task-auto の手順6" "$s6" 'auto-findings.sh --file' '--expect <数え直した数>' '記録の件数ではなく、一覧から数え直した数にする' \
+    '終了コードが 0 でなければ、PR を作らずに' '- 2（記録の中身に問題がある）：手順5に戻って記録を直す' '- 64（記録のファイルが無い・`--expect` などの引数の誤り）：指摘を足したり起票したりしない' '同じ要約の指摘の重複' '検査が通るまで、次へ進まない'
+  # 検査は、pr-create の手順に従う前（PR を作る前）にある
+  before="$(step "$f" 6 '^pr-create の手順1〜4に従い')"
+  has "task-auto の手順6の pr-create の前" "$before" 'auto-findings.sh --file'
+  # 確認の表の行（| で始まる行）に、auto-findings.sh は出てこない（表は確認の代わりに決めることだけ）
+  ! grep -qE '^\|.*auto-findings\.sh' "$f" || fail "確認の表に auto-findings.sh があります"
+  grep -qF '`${CLAUDE_PLUGIN_ROOT}/scripts/auto-findings.sh`' "$f" || fail "スクリプトの一覧にありません"
+  design="$BATS_TEST_DIRNAME/../docs/design.md"
+  grep -qF '| `auto-findings.sh` |' "$design" || fail "設計書のスクリプトの表にありません"
+  grep -qF '**範囲外の指摘の記録**（#378）' "$design" || fail "設計書に記録の説明がありません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "task-auto は、手順7で後から起票した Issue を、自分で作った PR に限り、PR へのコメントで足す（本文は直さない。#378）" {
+  f="$SKILLS/task-auto/SKILL.md"
+  s7="$(step "$f" 7)"
+  has "task-auto の手順7" "$s7" '手順6の出力の `created` が true' '`gh pr comment <PR番号> --body-file <ファイル>`' \
+    '既にあった PR（`created` が false。人や前の実行が作ったもの）には、コメントしない' '本文は直さない' 'コメントできなかったら、止まらずに'
+  grep -qF '手順7で後から起票した Issue を、task-auto が自分で作った PR に付けるコメント' "$f" || fail "GitHub に書き込むものに PR へのコメントがありません"
+  grep -qF 'PR の本文は、作るとき以外は直さない' "$f" || fail "PR の本文を直さないことが書かれていません"
+  # PR に書き込むのは、gh pr comment だけ（gh pr edit で本文を直す手順を書かない）
+  ! grep -qF 'gh pr edit' "$f" || fail "task-auto が gh pr edit を使う手順があります"
+  design="$BATS_TEST_DIRNAME/../docs/design.md"
+  grep -qF 'task-auto が自分で作った PR へのコメント' "$design" || fail "設計書に、書き込むものへの追加がありません"
+  grep -qF '**後から起票した Issue の PR への伝え方**（#378）' "$design" || fail "設計書にありません"
+}
+
 @test "スキルが直接実行するスクリプト（scripts/ と scripts/setup/ の .sh）は、git で実行権限が付いている（lib/ は読み込むだけなので除く）" {
   # bats はスクリプトを bash で起動するので、実行権限が無くても通ってしまう。スキルは ${CLAUDE_PLUGIN_ROOT}/scripts/… を
   # そのまま実行するので、権限が無いと Permission denied で止まる（task-auto の eval で見つかった）
