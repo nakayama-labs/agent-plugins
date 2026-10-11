@@ -454,6 +454,16 @@ expect_check() {
   assert_output --partial "PR #5 のマージキューの状態を読めません: "
 }
 
+@test "環境に DW_QUEUE_NOW が残っていても、PR_WATCH_NOW があればそれでキューの時刻を判定する（時計を 2 つにしない。#381）" {
+  setup_fake_gh
+  pr_view '{}'
+  # 5 分前（00:05）に入れたイベントだけがある。今は 00:10（PR_WATCH_NOW）なので、キューの中。DW_QUEUE_NOW が勝てば、1 日後で並びに出ていない扱いになる
+  queue_state '{timelineItems: {nodes: [{__typename: "AddedToMergeQueueEvent", createdAt: "2026-10-01T00:05:00Z"}]}}'
+  DW_QUEUE_NOW=1790899800 run_script pr-watch.sh --pr 5
+  assert_success
+  assert_equal "$(jq -c '[.action, .reasons]' <<<"$output")" '["wait",["in_merge_queue"]]'
+}
+
 @test "不明な引数は 64 で止まり、--help は使い方を出して 0 で終わる" {
   setup_fake_gh
   run_script pr-watch.sh --bogus

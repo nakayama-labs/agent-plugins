@@ -1005,7 +1005,8 @@ dw_merge_queue_for_branch() {
     -f query='query MergeQueueForBranch($owner: String!, $name: String!, $branch: String!) {
       repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { id } }
     }')" || return 1
-  out="$(jq -r 'if (.data.repository | type == "object") and (.data.repository | has("mergeQueue")) then (.data.repository.mergeQueue != null) else empty end' <<<"$res" 2>/dev/null)" || out=""
+  # errors が 1 件でもあれば（mergeQueue が null でも）部分的な失敗かもしれないので、キューが無いとは読まず、読めないとする
+  out="$(jq -r 'if ((.errors // []) | length) == 0 and (.data.repository | type == "object") and (.data.repository | has("mergeQueue")) then (.data.repository.mergeQueue != null) else empty end' <<<"$res" 2>/dev/null)" || out=""
   if [ -z "$out" ]; then
     out="$(jq -r '[.errors[]?.message // empty] | join("; ")' <<<"$res" 2>/dev/null || true)"
     [ -n "$out" ] || out="マージキューの有無の応答を読めません: ${res:0:200}"

@@ -100,8 +100,8 @@ now="${PR_WATCH_NOW:-$(date -u +%s)}"
 # キューの中かは、pr-merge-status.sh・branch-status.sh と同じ判定（common.sh の dw_merge_queue_state の queued。ADR 000323）にそろえる。
 # mergeQueueEntry だけで見ると、入れた直後（まだ mergeQueueEntry に出ていない）と、merged で外れた直後（マージの直前）を
 # キューの外として扱ってしまう。見るのは queued だけなので、外れた後の push を読まないよう、フォークとして渡す。
-# 今の時刻は PR_WATCH_NOW にそろえる
-[ -z "${PR_WATCH_NOW:-}" ] || export DW_QUEUE_NOW="${DW_QUEUE_NOW:-$PR_WATCH_NOW}"
+# 今の時刻は PR_WATCH_NOW があればそれにそろえる（環境に残った DW_QUEUE_NOW には負けない。時計を 2 つにしない）
+[ -z "${PR_WATCH_NOW:-}" ] || export DW_QUEUE_NOW="$PR_WATCH_NOW"
 dw_check_queue_now
 qerr="$(mktemp)"
 mq="$(dw_merge_queue_state "$(jq -r .pr.url <<<"$fb")" "" true 2>"$qerr")" \

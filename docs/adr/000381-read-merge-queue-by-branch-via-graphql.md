@@ -32,8 +32,8 @@ issue: 381
 
 選んだ案：「GraphQL の `repository.mergeQueue(branch: ベースブランチ)` で、キューを使うかを読む」。理由は、決め手のうち、古いブランチ保護のキューも、PR が無い場面も満たす唯一の案だから。ブランチ保護の情報（REST）にはキューの設定が出ない。キューの有無は、`gh pr view` にも REST にも無く、ADR 000089 の「他に手段が無いとき」に当たる。
 
-* `common.sh` に `dw_merge_queue_for_branch <owner/repo> <ブランチ>` を足す。`repository.mergeQueue(branch:)` が返れば true、null なら false を出す。`{owner}/{repo}` は gh が今のリポジトリに置き換える。読めなければ、理由を 1 行で標準エラーに出して非 0 を返す
-* `pr-create.sh` は、`merge_queue` をこの関数で読む。読めなければ、これまでどおり null にして止めない
+* `common.sh` に `dw_merge_queue_for_branch <owner/repo> <ブランチ>` を足す。`repository.mergeQueue(branch:)` が返れば true、null なら false を出す。応答に errors が 1 件でもあれば、部分的な失敗をキュー無しと読まないよう、読めないものとして扱う。`{owner}/{repo}` は gh が今のリポジトリに置き換える。読めなければ、理由を 1 行で標準エラーに出して非 0 を返す
+* `pr-create.sh` は、`merge_queue` をこの関数で読む。読めなければ、`doctor.sh` と同じく、ルールセットのルール（`dw_merge_queue_enabled`）で代える。それも読めなければ null にして止めない
 * `doctor.sh` は、キューを使うかをこの関数で読む。読めなければ、ルールセットのキュー（`rules/branches`）で代える（GraphQL を読めないだけで、キューの案内を消さないため）。必須のチェックの有無と strict の判定は、これまでどおりルールセットと古いブランチ保護で決める
 * `pr-watch.sh` は、キューの中かを `dw_merge_queue_state` の `queued` で決める（入れた直後・merged で外れた直後もキューの中）。見るのは `queued` だけなので、外れた後の push は読まない（フォークとして渡す）。キューの状態を読めなければ、理由を 1 行で伝えて止まる（PrWatch の問い合わせを読めないときと同じ）
 * `dw_merge_queue_enabled`（ルールだけで読む）は、`pr-merge-status.sh`・`branch-status.sh` が `dw_merge_queue_state` を読めないときの代わりにだけ残す（ADR 000323 のとおり。GraphQL を読めないときに、同じ GraphQL でやり直しても読めないため）

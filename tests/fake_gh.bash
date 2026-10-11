@@ -32,7 +32,7 @@
 # - gh api graphql                  操作名ごとに $FIX/<操作名>.json（変数 number があり $FIX/<操作名>-issue-<number>.json があればそれ）を返し、「<操作名> <変数>」を $CALLS に記録する
 # - gh project ・Project の REST     fake_gh_project.bash が受け持つ（ProjectView・ProjectFields・AddItem・SetField など）
 # FAKE_GH_STDERR を指定すると、どの呼び出しでも、その文字列を標準エラーに出す（成功する呼び出しでも）。
-# FAKE_FAIL に指定した操作名（issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues・api-rules・api-merge-queue・api-parent・api-activity を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
+# FAKE_FAIL に指定した操作名（, で区切って複数も指定できる。issue-view・edit・issue-comment・issue-close・pr-list・pr-view・pr-create・pr-comment・pr-close・api-get・api-delete・api-sub-issues・api-rules・api-merge-queue・api-parent・api-activity を含む）は、FAKE_FAIL_MSG（既定: gh: failed）を出して失敗する。
 
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -50,7 +50,7 @@ for a in "$@"; do
   if [ "${prev:-}" = -q ]; then q="$a"; fi
   prev="$a"
 done
-fail() { if [ "${FAKE_FAIL:-}" = "$1" ]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi; }
+fail() { if [ -n "${FAKE_FAIL:-}" ] && [[ ",$FAKE_FAIL," == *",$1,"* ]]; then echo "${FAKE_FAIL_MSG:-gh: failed}" >&2; exit 1; fi; }
 # FAKE_GH_STDERR があれば、成功しても標準エラーに出す（gh のお知らせ・警告の代わり。JSON と混ぜずに読むかを試す）
 [ -z "${FAKE_GH_STDERR:-}" ] || echo "$FAKE_GH_STDERR" >&2
 case "$1 $2" in
@@ -174,7 +174,9 @@ case "$1 $2" in
       for a in "$@"; do case "$a" in branch=*) branch="${a#branch=}" ;; esac; done
       echo "api-merge-queue $branch" >>"$CALLS"
       fail api-merge-queue
-      if [ -f "$FIX/queue/$branch" ]; then echo '{"data": {"repository": {"mergeQueue": {"id": "MQ_1"}}}}'
+      # $FIX/queue-errors があれば、応答に errors を足す（部分的な失敗。mergeQueue は null）
+      if [ -f "$FIX/queue-errors" ]; then echo '{"data": {"repository": {"mergeQueue": null}}, "errors": [{"message": "partial failure"}]}'
+      elif [ -f "$FIX/queue/$branch" ]; then echo '{"data": {"repository": {"mergeQueue": {"id": "MQ_1"}}}}'
       else echo '{"data": {"repository": {"mergeQueue": null}}}'; fi
       exit 0
       ;;

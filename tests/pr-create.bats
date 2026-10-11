@@ -793,16 +793,34 @@ queue_on() {
   assert_equal "$(jq -c '[.created, .merge_queue]' <<<"$json")" '[true,true]'
 }
 
-@test "base_branch にマージキューが無ければ merge_queue は false、読めなければ null にし、PR は作る" {
+@test "base_branch にマージキューが無ければ merge_queue は false、GraphQL もルールも読めなければ null にし、PR は作る" {
   setup_branch
   fake_issue 17 '["feat"]'
   echo '[{"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": true}}]' >"$FIX/rules.json"
   run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
   assert_success
   assert_equal "$(jq .merge_queue <<<"$json")" false
-  FAKE_FAIL=api-merge-queue run_pr --issue 17 --body-file "$TMP/body.md"
+  FAKE_FAIL=api-merge-queue,api-rules run_pr --issue 17 --body-file "$TMP/body.md"
   assert_success
   assert_equal "$(jq -c '[.created, .merge_queue]' <<<"$json")" '[true,null]'
+}
+
+@test "GraphQL でマージキューの有無を読めなければ、ルールセットのルールで代える。errors 付きの応答も読めないものとして代える（#381）" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  echo '[{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]' >"$FIX/rules.json"
+  FAKE_FAIL=api-merge-queue run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq .merge_queue <<<"$json")" true
+  # errors があれば、mergeQueue が null でも、キューが無いとは読まない（false にならず、ルールで代える）
+  : >"$FIX/queue-errors"
+  run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq .merge_queue <<<"$json")" true
+  # ルールも読めなければ null
+  FAKE_FAIL=api-rules run_pr --issue 17 --body-file "$TMP/body.md" --dry-run
+  assert_success
+  assert_equal "$(jq .merge_queue <<<"$json")" null
 }
 
 @test "既にある PR を使うときは、設定の base_branch ではなく、その PR のマージ先でマージキューを通すかを見る（#178）" {
