@@ -461,3 +461,14 @@ SH
   assert_success
   assert_equal "$(jq -c '.parents' <<<"$output")" '[]'
 }
+
+@test "子を start に移すとき、親が読めない（/parent が 404 で parent_issue_url がある）と、子の操作は成功し、警告して親の列は移さない（#347）" {
+  setup_parents
+  rm -f "$FIX/parent-17.json"
+  jq -nc '{number: 17, url: "https://api.github.com/repos/me/demo/issues/17", parent_issue_url: "https://api.github.com/repos/other/private/issues/3"}' >"$FIX/issue-17.json"
+  run_script status-set.sh --issue 17 --to start
+  assert_success
+  assert_equal "$(moved)" "IT17,"
+  assert_equal "$(json_of "$output" | jq -c .parents)" '[]'
+  assert_equal "$(json_of "$output" | jq -r ".warnings | join(\"\\n\")")" "$(printf '%s' "Issue #17 の親を読めなかったので、親の列は移しません（原因: #17 の親（https://api.github.com/repos/other/private/issues/3）を読めません（トークンで読めないリポジトリにあるかもしれません）。親があるので、親なしとは数えません）")"
+}
