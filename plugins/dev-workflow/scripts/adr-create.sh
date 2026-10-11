@@ -118,7 +118,6 @@ if [ -n "$accept" ]; then
     tmp="$(mktemp "${TMPDIR:-/tmp}/adr-create.XXXXXX")"
     trap 'rm -f "$tmp"' EXIT
     # status と date の行だけを書き換える（front matter の中の最初の行）。行末の CR は、見分けるときだけ外し、書く行に残す
-    # status と date の行だけを書き換える（front matter の中の最初の行）。行末の CR は、見分けるときだけ外し、書く行に残す
     awk -v d="$date" -v eol="$(adr_eol "$p")" "$AWK_OUT"'
       { l = $0; cr = sub(/\r$/, "", l) ? "\r" : "" }
       NR == 1 { fm = 1; out($0); next }
