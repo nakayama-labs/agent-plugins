@@ -154,3 +154,25 @@ run_findings() { run_script auto-findings.sh --file "$TMP/f.json" "$@"; }
   assert_equal "$(wc -l <<<"$output" | tr -d ' ')" 1
   assert_output --partial 'a.sh:1 二行目'
 }
+
+@test "記録のファイルに JSON が複数連なっていると、1行のエラーで止まる" {
+  printf '[]\n[1]\n' >"$TMP/f.json"
+  run_findings --expect 0
+  assert_failure 2
+  assert_output --partial '1つの JSON の配列'
+  assert_equal "$(wc -l <<<"$output" | tr -d ' ')" 1
+  printf '[]\n[]\n' >"$TMP/f.json"
+  run_findings --expect 0
+  assert_failure 2
+  printf '' >"$TMP/f.json"
+  run_findings --expect 0
+  assert_failure 2
+}
+
+@test "同じ summary の指摘が複数あると（前後の空白を除いて比べる）、1行のエラーで止まる" {
+  write_ledger '[{"summary":"a.sh:1 誤字","disposition":"filed","issue":9},{"summary":" a.sh:1 誤字\n","disposition":"limit","reason":"r"}]'
+  run_findings --expect 2
+  assert_failure 2
+  assert_output --partial 'summary が重複'
+  assert_equal "$(wc -l <<<"$output" | tr -d ' ')" 1
+}

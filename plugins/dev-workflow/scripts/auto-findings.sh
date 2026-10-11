@@ -20,7 +20,7 @@
 #                記録の件数と同じでなければ止まる（記録に書き出し忘れた指摘を見つけるため。記録どうしの比べでは見つけられない）
 #
 # 止まるとき: --file・--expect が無い・--expect が整数でない・記録のファイルが無い（終了コード 64）、
-#             記録が JSON の配列でない・件数が --expect と違う・番号も理由も無い指摘がある・disposition が使えない値（2）
+#             記録が1つの JSON の配列でない・summary が重複している・件数が --expect と違う・番号も理由も無い指摘がある・disposition が使えない値（2）
 #
 # 出力: {file, total, expected, counts（disposition ごとの件数）, filed（起票した Issue の番号）, duplicates（重複で起票しなかった指摘の既存の Issue の番号）}
 set -euo pipefail
@@ -57,14 +57,20 @@ trimmed="${expect#"${expect%%[!0]*}"}"
 [ "${#trimmed}" -le 9 ] || dw_die "--expect が大きすぎます（9 桁までの整数にしてください）: $expect" 64
 [ -f "$file" ] || dw_die "範囲外の指摘の記録のファイルがありません: $file（指摘が無くても [] を書いてください）" 64
 
-jq -e 'type == "array"' "$file" >/dev/null 2>&1 \
-  || dw_die "範囲外の指摘の記録が JSON の配列ではありません: $file" 2
+# ファイル全体がちょうど1つの JSON の配列であること（複数の JSON が連なっていたり、空だったりすれば止まる）
+jq -se 'length == 1 and (.[0] | type == "array")' "$file" >/dev/null 2>&1 \
+  || dw_die "範囲外の指摘の記録が、1つの JSON の配列ではありません: $file" 2
 
 # 件数が違えば、書き出し忘れ（または多く書いた）ので止まる。--expect は 10 進に直す（先頭の 0 を 8 進にしない）
 total="$(jq length "$file")"
 expect_n="$(jq -n --arg e "$expect" '$e | tonumber')"
 [ "$total" -eq "$expect_n" ] \
   || dw_die "範囲外の指摘の記録は ${total} 件ですが、レビューの一覧から数え直すと ${expect_n} 件です。書き出し忘れた指摘を記録に足してください" 2
+
+# 同じ要約（前後の空白を除く）の指摘が複数あれば止まる（同じ指摘は1件と数えるので、重複は、別の指摘の書き出し忘れを隠す）
+dups="$(jq -r '[.[] | select(type == "object" and (.summary | type == "string")) | .summary | gsub("^\\s+|\\s+$"; "")]
+  | group_by(.) | map(select(length > 1) | .[0] | gsub("\\s+"; " ")) | join(" / ")' "$file")"
+[ -z "$dups" ] || dw_die "範囲外の指摘の記録で summary が重複しています（同じ指摘は1件にして、書き出し忘れた指摘を足してください）: $dups" 2
 
 # 番号も理由も無い指摘、扱いが決まっていない指摘を探す（1件ずつ、位置と要約を添える）
 # shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
