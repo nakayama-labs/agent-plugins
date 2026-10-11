@@ -78,20 +78,28 @@ else
   date="$(date +%F)"
 fi
 
+# ADR を探す。置き場所からの相対パス、リポジトリのルートからの相対パスの順に見て、最初の通常ファイルを resolved_adr に入れる。
+# 見つからなければ 1 を返す（--accept と --supersedes で、探し方を揃えるため）。repo_root と adr_dir を使う
+resolve_adr() {
+  local cand
+  resolved_adr=""
+  for cand in "$repo_root/$adr_dir/$1" "$repo_root/$1"; do
+    if [ -f "$cand" ]; then
+      resolved_adr="$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [ -n "$accept" ]; then
   [ -z "$issue$name$template" ] && [ ${#supersedes[@]} -eq 0 ] || dw_die "--accept は --issue・--name・--template・--supersedes と一緒に使えません" 64
   repo_root="$(dw_repo_root || true)"
   [ -n "$repo_root" ] || dw_die "git のリポジトリの中ではありません" 2
   config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
   adr_dir="$(dw_adr_dir "$config")"
-  p=""
-  for cand in "$repo_root/$adr_dir/$accept" "$repo_root/$accept"; do
-    if [ -f "$cand" ]; then
-      p="$cand"
-      break
-    fi
-  done
-  [ -n "$p" ] || dw_die "採択する ADR が見つかりません: ${accept}" 4
+  resolve_adr "$accept" || dw_die "採択する ADR が見つかりません: ${accept}" 4
+  p="$resolved_adr"
   # front matter が閉じていて、その中に status（値が proposed）と date の行がそれぞれあること
   awk "$DW_AWK_STRIP_CR_BOM$DW_AWK_YAML"' NR == 1 && $0 != "---" { bad = 1; exit } NR > 1 && $0 == "---" { closed = 1; exit }
     !st && /^status:/ { v = $0; sub(/^status:/, "", v); if (unquote(strip(v)) != "proposed") { bad = 1; exit } st = 1 }
@@ -103,13 +111,18 @@ if [ -n "$accept" ]; then
     tmp="$(mktemp "${TMPDIR:-/tmp}/adr-create.XXXXXX")"
     trap 'rm -f "$tmp"' EXIT
     # status と date の行だけを書き換える（front matter の中の最初の行）。行末の CR は、見分けるときだけ外し、書く行に残す
-    awk -v d="$date" '
+    # 末尾に改行の無い ADR に、改行を足さない（eol は末尾の改行の有無。行の前に改行を出し、最後に eol のときだけ足す）
+    eol=1
+    [ -z "$(tail -c1 "$p")" ] || eol=0
+    awk -v d="$date" -v eol="$eol" '
+      function out(x) { printf "%s%s", (NR > 1 ? "\n" : ""), x }
       { l = $0; cr = sub(/\r$/, "", l) ? "\r" : "" }
-      NR == 1 { fm = 1; print; next }
+      NR == 1 { fm = 1; out($0); next }
       fm && l == "---" { fm = 0 }
-      fm && !sd && l ~ /^status:/ { print "status: \"accepted\"" cr; sd = 1; next }
-      fm && !dd && l ~ /^date:/ { print "date: " d cr; dd = 1; next }
-      { print }' "$p" >"$tmp"
+      fm && !sd && l ~ /^status:/ { out("status: \"accepted\"" cr); sd = 1; next }
+      fm && !dd && l ~ /^date:/ { out("date: " d cr); dd = 1; next }
+      { out($0) }
+      END { if (eol && NR > 0) printf "\n" }' "$p" >"$tmp"
     cat "$tmp" >"$p" || dw_die "採択する ADR を書き換えられません: ${accept}（一部だけ書き換わっているかもしれません）" 1
   fi
   jq -n --arg p "${p#"$repo_root"/}" --arg d "$date" --argjson dr "$dry_run" \
@@ -151,14 +164,8 @@ path="$repo_root/$rel"
 # 置き換える ADR を、作る前にすべて確かめる（途中で止まって中途半端に書き換えないため）
 old_paths=()
 for f in ${supersedes[@]+"${supersedes[@]}"}; do
-  p=""
-  for cand in "$repo_root/$adr_dir/$f" "$repo_root/$f"; do
-    if [ -f "$cand" ]; then
-      p="$cand"
-      break
-    fi
-  done
-  [ -n "$p" ] || dw_die "置き換える ADR が見つかりません: ${f}" 4
+  resolve_adr "$f" || dw_die "置き換える ADR が見つかりません: ${f}" 4
+  p="$resolved_adr"
   [ "$p" != "$path" ] || dw_die "自分自身は置き換えられません: ${f}" 4
   # front matter が閉じていて、その中に status の行があること
   awk "$DW_AWK_STRIP_CR_BOM"' NR == 1 && $0 != "---" { exit 1 } NR > 1 && $0 == "---" { closed = 1; exit !found } /^status:/ { found = 1 } END { exit !closed }' "$p" \
