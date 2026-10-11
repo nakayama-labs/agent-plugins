@@ -46,8 +46,8 @@
 #
 # 出力の pr_base は PR のマージ先。既にある PR を使うならその PR のマージ先（設定の base_branch と違うことがある）、
 # 新しく作るなら作る PR のマージ先（base_branch）。設定の base_branch は base に出す。
-# 出力の merge_queue は、pr_base へのマージがマージキューを通すか（true・false。ブランチに効いているルールを
-# 読めなければ null）。PR を出した後の案内（キューに入れるか、マージ先が進んだら取り込むか）を切り替えるのに使う
+# 出力の merge_queue は、pr_base へのマージがマージキューを通すか（true・false。GraphQL で読めなければ
+# ルールセットのルールで代え、それも読めなければ null）。PR を出した後の案内（キューに入れるか、マージ先が進んだら取り込むか）を切り替えるのに使う
 # 出力の ahead は、origin/<pr_base> より先のコミットの数（dry-run で手元に origin/<pr_base> が無く、確かめていなければ null）
 set -euo pipefail
 
@@ -357,8 +357,10 @@ fi
 
 # --- マージキュー ----------------------------------------------------------------
 # PR を出した後の案内を切り替えるため、PR のマージ先（pr_base）へのマージがキューを通すかを読む（doctor.sh と同じく、
-# 組織のルールセットも含めてブランチに効いているルールで見る）。読むだけなので dry-run でも読む。読めなければ null にし、止めない
-merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$pr_base")" || merge_queue=null
+# GraphQL の repository.mergeQueue で見る。古いブランチ保護のキューも含む。ADR 000381）。読むだけなので dry-run でも読む。読めなければ null にし、止めない
+# GraphQL で読めなければ、doctor.sh と同じく、ルールセットのルール（dw_merge_queue_enabled）で代える。それも読めなければ null
+merge_queue="$(dw_merge_queue_for_branch '{owner}/{repo}' "$pr_base" 2>/dev/null)" \
+  || merge_queue="$(dw_merge_queue_enabled '{owner}/{repo}' "$pr_base" 2>/dev/null)" || merge_queue=null
 
 # 本文、Issue のチェックリストの項目（tasks）、指定した項目（to_check・to_add）と、それを並べた知らせを含む actions は
 # 大きいことがあるので、引数では渡さない（引数1つの長さには上限がある）。本文は一時ファイル（body_tmp）から --rawfile で、

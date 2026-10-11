@@ -985,13 +985,41 @@ dw_branch_rules() {
   gh api --paginate "repos/$1/rules/branches/$(jq -rn --arg b "$2" '$b | @uri')?per_page=100" 2>/dev/null
 }
 
-# ブランチへのマージがマージキューを通すか（ブランチに効いているルールに merge_queue があるか）を判定する jq の定義。
+# ルールセットのルールに merge_queue があるか（dw_merge_queue_enabled）を判定する jq の定義。
 # 入力は、rules/branches のページをまとめた1つの配列。source した側で、jq のフィルターの先頭に付けて使う
 # shellcheck disable=SC2034
 DW_JQ_MERGE_QUEUE='def merge_queue: any(.[]; .type == "merge_queue");'
 
-# ブランチへのマージがマージキューを通すかを、true か false で出力する。組織のルールセットも含めて、ブランチに効いている
-# ルール（dw_branch_rules）で決める（doctor.sh と同じ読み方）。読めなければ非0を返す（どう扱うかは呼び出し側で決める）。
+# ブランチへのマージがマージキューを通すかを、true か false で出力する。GraphQL の repository.mergeQueue(branch: ブランチ) が
+# あるかで決める（ADR 000381）。ルールセットでも古いブランチ保護でもキューが有効なら返り、PR が無くても読める
+# （REST の rules/branches はルールセットのルールだけを返し、古いブランチ保護の「Require merge queue」は見えない）。
+# 読めなければ（権限が無い・ネットワークの失敗など）理由を1行で標準エラーに出して非0を返す（どう扱うかは呼び出し側で決める）。
+# 使い方: dw_merge_queue_for_branch <owner/repo（{owner}/{repo} でもよい。gh が今のリポジトリに置き換える）> <ブランチ>
+dw_merge_queue_for_branch() {
+  local res owner name out
+  owner="${1%%/*}"
+  name="${1#*/}"
+  # {owner}・{repo} は gh api の -F の値でだけ置き換わる。ブランチ名は数字や true と読まれないよう -f で渡す
+  # shellcheck disable=SC2016 # GraphQL の変数（$owner など）を bash に展開させないため、シングルクォートで書く
+  res="$(dw_gh_run api graphql -F owner="$owner" -F name="$name" -f branch="$2" \
+    -f query='query MergeQueueForBranch($owner: String!, $name: String!, $branch: String!) {
+      repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { id } }
+    }')" || return 1
+  # errors が 1 件でもあれば（mergeQueue が null でも）部分的な失敗かもしれないので、キューが無いとは読まず、読めないとする
+  out="$(jq -r 'if ((.errors // []) | length) == 0 and (.data.repository | type == "object") and (.data.repository | has("mergeQueue")) then (.data.repository.mergeQueue != null) else empty end' <<<"$res" 2>/dev/null)" || out=""
+  if [ -z "$out" ]; then
+    out="$(jq -r '[.errors[]?.message // empty] | join("; ")' <<<"$res" 2>/dev/null || true)"
+    [ -n "$out" ] || out="マージキューの有無の応答を読めません: ${res:0:200}"
+    printf '%s\n' "$out" | tr '\n' ' ' >&2
+    printf '\n' >&2
+    return 1
+  fi
+  printf '%s\n' "$out"
+}
+
+# ブランチへのマージがマージキューを通すかを、ブランチに効いているルールセットのルール（dw_branch_rules）だけで、true か false で出力する。
+# 古いブランチ保護のキューは見えないので、GraphQL の dw_merge_queue_for_branch を読めないときの代わりにだけ使う
+# （pr-merge-status.sh・branch-status.sh。ADR 000323）。読めなければ非0を返す。
 # 使い方: dw_merge_queue_enabled <owner/repo（{owner}/{repo} でもよい）> <ブランチ>
 dw_merge_queue_enabled() {
   local rules

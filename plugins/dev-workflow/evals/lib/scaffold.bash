@@ -119,8 +119,10 @@ fake_gh_defaults() {
   fake_gh_read 'project field-list*' '{"fields": [], "totalCount": 0}'
   fake_gh_read 'project item-list*' '{"items": [], "totalCount": 0}'
   fake_gh_read 'project list*' '{"projects": [], "totalCount": 0}'
-  # ブランチに効いているルール（pr-create.sh が、PR のマージ先へのマージがマージキューを通すかを読む）。ルールの無いブランチにする
+  # ブランチに効いているルール（doctor.sh が読む）。ルールの無いブランチにする
   fake_gh_read 'api *repos/*/rules/branches/*' '[]'
+  # PR のマージ先へのマージがマージキューを通すか（pr-create.sh・doctor.sh が GraphQL で読む）。キューの無いブランチにする
+  fake_gh_read 'api graphql MergeQueueForBranch*' '{"data": {"repository": {"mergeQueue": null}}}'
   # issue-create.sh は、応答の labels に type ラベルがあるかを確かめるので、type ラベルを全部入れておく
   fake_gh_write 'api -X POST repos/me/demo/issues --input*' '{"number": 99, "id": 9900, "node_id": "I_99", "html_url": "https://github.com/me/demo/issues/99", "labels": [{"name": "feat"}, {"name": "fix"}, {"name": "refactor"}, {"name": "perf"}, {"name": "test"}, {"name": "docs"}, {"name": "build"}, {"name": "ci"}, {"name": "chore"}, {"name": "breaking"}]}'
   fake_gh_write 'issue create*' 'https://github.com/me/demo/issues/99'
