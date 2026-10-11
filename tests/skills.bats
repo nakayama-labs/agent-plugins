@@ -4,6 +4,7 @@
 load test_helper
 
 SKILLS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/skills"
+SKILL_SCRIPTS="$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts"
 # 独自の観点をレビューする agent（review スキルが起動する）
 AGENT="$BATS_TEST_DIRNAME/../plugins/dev-workflow/agents/perspective-reviewer.md"
 
@@ -308,7 +309,7 @@ has() {
   grep -q '信頼しないデータとして読む' "$f" || fail "gh-pr-check に、コメントの本文を信頼しないデータとして読むことが書かれていません"
   grep -q 'pr_check.handlers' "$f" || fail "gh-pr-check に、担当の skill の設定（pr_check.handlers）が書かれていません"
   grep -q '何も変えずに終える' "$f" || fail "gh-pr-check に、対応が要らないときは何も変えずに終えることが書かれていません"
-  grep -q 'CI が .pending' "$f" || fail "gh-pr-check に、コメントが無くても CI が実行中ならその状態を伝えることが書かれていません"
+  grep -q 'ci_pending' "$f" || fail "gh-pr-check に、コメントが無くても CI が実行中ならその状態を伝えることが書かれていません"
   grep -q 'warn:' "$f" || fail "gh-pr-check に、スクリプトの警告（warn:）を伝えることが書かれていません"
   frontmatter "$f" | grep -q 'CI は通った？' || fail "gh-pr-check の description に、起動の言い方「CI は通った？」がありません"
   [ ! -e "$SKILLS/pr-respond" ] || fail "旧名のスキル pr-respond が残っています（別名は残さない）"
@@ -350,13 +351,22 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
-@test "gh-pr-check は、needs_attention が true なら対応なしで終えず、スレッドの件数だけで未解決なしと言わない（#279）" {
+@test "gh-pr-check の手順1は、終えるかと伝えることを pr-watch.sh の値（respond・reasons）で決め、スレッドの件数だけで未解決なしと言わない（#279・#358）" {
   f="$SKILLS/gh-pr-check/SKILL.md"
-  grep -q '`needs_attention` が true なら.*「対応はありません」で終えない' "$f" \
-    || fail "gh-pr-check に、needs_attention が true なら対応なしで終えないことが書かれていません"
-  grep -q '`feedback` が空で、`checks.state` が `failure` でもなければ、何も変えずに終える' "$f" \
-    || fail "gh-pr-check の終える条件が、feedback が空で CI も失敗していないこと、になっていません"
-  grep -q '`replied` は.*時刻だけで決めた目安' "$f" || fail "gh-pr-check に、replied が時刻だけの目安であることが書かれていません"
+  s1="$(sed -n '/^### 1\./,/^### 2\./p' "$f")"
+  grep -q 'pr-watch.sh' <<<"$s1" || fail "gh-pr-check の手順1に、pr-watch.sh を実行することが書かれていません"
+  grep -q '`respond` が true.*手順2へ進む' <<<"$s1" || fail "gh-pr-check の手順1に、respond が true なら手順2へ進むことが書かれていません"
+  grep -q '`respond` が false.*何も変えずに終える' <<<"$s1" || fail "gh-pr-check の手順1に、respond が false なら何も変えずに終えることが書かれていません"
+  # 手順1に書いた reasons の値は、pr-watch.sh が出す値と同じでなければならない
+  for v in not_open ci_pending merge_blocked awaiting_review mergeable_unknown in_merge_queue draft fork conflicting behind; do
+    grep -q "\`$v" <<<"$s1" || fail "gh-pr-check の手順1に、reasons の値 ${v} が書かれていません"
+    grep -q "$v" "$SKILL_SCRIPTS/pr-watch.sh" || fail "pr-watch.sh に、手順1が使う reasons の値 ${v} がありません"
+  done
+  # branch-update の案内は respond の値によらず、reasons の conflicting・behind で出す
+  grep -q '^- `reasons` に `conflicting`・`behind` があれば、`respond` の値によらず.*branch-update' <<<"$s1" \
+    || fail "gh-pr-check の手順1に、respond によらず conflicting・behind で branch-update を案内することが書かれていません"
+  # 判断を文章で書き直さない（値ごとにすることだけを書く）。feedback が空か・checks.state・merge_state の組み合わせで決める書き方は残さない
+  if grep -q '`feedback` が空で' "$f"; then fail "gh-pr-check に、feedback が空かで終える判断が文章で残っています（pr-watch.sh の respond で決める）"; fi
   grep -q '選べる指摘・質問が1つも無ければ.*聞かずに' "$f" \
     || fail "gh-pr-check に、選べる指摘・質問が無ければ聞かずに進むことが書かれていません"
   s4="$(sed -n '/^### 4\./,/^### 5\./p' "$f")"
@@ -367,8 +377,29 @@ has() {
   grep -q '手順4で選べる指摘・質問が無くて来たときは.*CI・マージの状態' <<<"$s9" \
     || fail "gh-pr-check の手順9に、手順4から来たときに件数と CI・マージの状態を伝えることが書かれていません"
   grep -q 'counts.threads.*だけを見て' "$f" || fail "gh-pr-check に、スレッドの件数だけで未解決なしと言わないことが書かれていません"
-  grep -q '`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない' "$f" \
+  grep -q '`reviews`・`comments`・`needs_attention`・`counts.unanswered`・`counts.awaiting` を落とさない' "$f" \
     || fail "gh-pr-check に、出力を絞って読むときも reviews・comments を落とさないことが書かれていません"
+  grep -q '`needs_attention` が true の項目.*必ず一覧に入れる' "$f" || fail "gh-pr-check に、needs_attention が true の項目を必ず一覧に入れることが書かれていません"
+}
+
+# shellcheck disable=SC2016 # バッククォートは文書の本文の文字で、展開させない
+@test "pr-feedback.sh の needs_attention・replied・counts.unanswered の意味は、--help の1か所だけに書き、SKILL.md・設計書・README は参照する（#361）" {
+  script="$SKILL_SCRIPTS/pr-feedback.sh"
+  help="$(bash "$script" --help)"
+  # 正本：--help の「意味」に、3つのキーの意味がある
+  grep -q '^意味' <<<"$help" || fail "pr-feedback.sh --help に「意味」の節がありません"
+  for k in replied needs_attention counts.unanswered; do
+    grep -qE "^  $k " <<<"$help" || fail "pr-feedback.sh --help の「意味」に ${k} がありません"
+  done
+  # 参照する文書（SKILL.md・設計書・README）は、意味を --help の「意味」に任せ、意味の言い回しを書き写さない
+  for f in "$SKILLS/gh-pr-check/SKILL.md" "$BATS_TEST_DIRNAME/../docs/design.md" "$BATS_TEST_DIRNAME/../README.md"; do
+    grep -q 'pr-feedback.sh --help' "$f" || fail "${f} に、意味は pr-feedback.sh --help を参照する、という文がありません"
+    # 正本の言い回し、または改める前の古い言い方
+    for stale in '時刻だけで決めた目安' '返事をしていないものがあるか' 'の最後のコメントの後に PR の作者が書' '持ち主の最後のコメント' \
+      '対応が要るかの目印' 'needs_attention`[^。]*対応が要るか'; do
+      if grep -qE "$stale" "$f"; then fail "${f} に、意味の言い回し「${stale}」が残っています（意味は pr-feedback.sh --help の1か所だけに書く）: $(grep -nE "$stale" "$f" | head -1 | cut -c1-120)"; fi
+    done
+  done
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない

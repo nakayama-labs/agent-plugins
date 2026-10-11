@@ -192,6 +192,10 @@ grader_matches() {
   run "${TEST_BASH:-bash}" "$SCRIPTS/pr-feedback.sh"
   assert_success
   assert_equal "$(jq -c .needs_attention <<<"$output")" true
+  # gh-pr-check の手順1が使う pr-watch.sh も、準備の表で答えられ、指摘があるので一覧へ進む（respond が true）
+  run "${TEST_BASH:-bash}" "$SCRIPTS/pr-watch.sh" --pr 5
+  assert_success
+  assert_equal "$(jq -c '[.action, .reasons, .respond]' <<<"$output")" '["act",["unanswered_reviews"],true]'
   [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
 }
 

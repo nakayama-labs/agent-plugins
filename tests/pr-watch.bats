@@ -21,6 +21,9 @@ load test_helper
 #   担当の skill がある投稿者の最初のレビュー待ち（60 分まで）  wait      awaiting_review:<投稿者>
 #   mergeable が UNKNOWN                                        wait      mergeable_unknown
 #   どれでもない（CI が全部成功・チェックが無い）               idle      nothing_to_do
+#   （wait・nothing_to_do には、次の理由を続けて足す）
+#   返事待ちの項目がある                                        -         awaiting_replies
+#   merge_state が CLEAN でない（UNKNOWN・コンフリクトを除く）  -         merge_blocked
 #
 # 偽の gh。
 # - gh pr view [番号] --json ...   $FIX/pr-view.json を返す
@@ -83,6 +86,14 @@ write_threads() {
   jq -sc '{data: {repository: {pullRequest: {reviewThreads: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: .}}}}}' \
     "$FIX/threads" >"$FIX/PrThreads.json"
   : >"$FIX/threads"
+}
+
+# レビュー・PR のコメントの編集の時刻（lastEditedAt）を、スレッドの GraphQL の応答（PrThreads.json）に足す。write_threads の後に呼ぶ。
+# 使い方: last_edited <レビューか PR のコメントの id> <時刻>
+last_edited() {
+  jq -c --arg id "$1" --arg t "$2" '.data.repository.pullRequest.comments.nodes += [{id: $id, lastEditedAt: $t}]' \
+    "$FIX/PrThreads.json" >"$FIX/PrThreads.json.new"
+  mv "$FIX/PrThreads.json.new" "$FIX/PrThreads.json"
 }
 
 check_ok() { echo '{__typename: "CheckRun", name: "test", status: "COMPLETED", conclusion: "SUCCESS", workflowName: "CI", detailsUrl: "u"}'; }
@@ -157,23 +168,46 @@ expect() {
   assert_equal "$(jq -c .details.unanswered <<<"$output")" '{"threads":1,"reviews":0,"comments":0}'
   thread '[["alice","直してください"],["me","直しました"]]'
   write_threads
-  expect idle '["nothing_to_do"]'
+  expect idle '["nothing_to_do","awaiting_replies"]'
 }
 
 @test "表: 変更の要求か本文のあるレビューは、作者のコメントが後に無ければ act で unanswered_reviews" {
   setup_fake_gh
-  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}]}'
+  pr_view '{reviewDecision: "CHANGES_REQUESTED", reviews: [{id: "R1", author: {login: "alice"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}]}'
+  expect act '["unanswered_reviews"]'
+  # 本文の無い変更の要求は、作者が後で別の相手にコメントしても、変更の要求のあいだは act のまま（#357）
+  pr_view '{reviewDecision: "CHANGES_REQUESTED", reviews: [{id: "R1", author: {login: "alice"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}],
+    comments: [{id: "C1", author: {login: "me"}, body: "@bob 答えました", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
   expect act '["unanswered_reviews"]'
   pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "質問です", submittedAt: "2026-10-01T00:05:00Z"}]}'
   expect act '["unanswered_reviews"]'
   # 作者が後でコメントしていれば、対応済み
   pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "質問です", submittedAt: "2026-10-01T00:05:00Z"}],
     comments: [{id: "C1", author: {login: "me"}, body: "答えました", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
-  expect idle '["nothing_to_do"]'
+  expect idle '["nothing_to_do","awaiting_replies"]'
   # 本文の無い承認・コメントは、対応が要らない
   pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:05:00Z"},
     {id: "R2", author: {login: "alice"}, state: "COMMENTED", body: "", submittedAt: "2026-10-01T00:05:00Z"}]}'
   expect idle '["nothing_to_do"]'
+}
+
+@test "表: 返事の後に編集されたレビュー本文・PR のコメント、時刻が null のものは act（#357）" {
+  setup_fake_gh
+  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "質問です", submittedAt: "2026-10-01T00:05:00Z"}],
+    comments: [{id: "C1", author: {login: "me"}, body: "答えました", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
+  write_threads
+  expect idle '["nothing_to_do","awaiting_replies"]'
+  last_edited R1 2026-10-01T00:07:00Z
+  expect act '["unanswered_reviews"]'
+  pr_view '{comments: [{id: "C1", author: {login: "bob"}, body: "なぜ？", createdAt: "2026-10-01T00:05:00Z", url: "u"},
+    {id: "C2", author: {login: "me"}, body: "理由です", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
+  write_threads
+  last_edited C1 2026-10-01T00:07:00Z
+  expect act '["unanswered_comments"]'
+  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "質問です", submittedAt: null}],
+    comments: [{id: "C2", author: {login: "me"}, body: "別の話です", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
+  write_threads
+  expect act '["unanswered_reviews"]'
 }
 
 @test "表: 作者以外の PR のコメントは、作者のコメントが後に無ければ act で unanswered_comments" {
@@ -182,7 +216,7 @@ expect() {
   expect act '["unanswered_comments"]'
   pr_view '{comments: [{id: "C1", author: {login: "bob"}, body: "なぜ？", createdAt: "2026-10-01T00:05:00Z", url: "u"},
     {id: "C2", author: {login: "me"}, body: "理由です", createdAt: "2026-10-01T00:06:00Z", url: "u"}]}'
-  expect idle '["nothing_to_do"]'
+  expect idle '["nothing_to_do","awaiting_replies"]'
 }
 
 @test "表: act の理由は、当てはまるものをすべて並べる" {
@@ -230,7 +264,73 @@ expect() {
   setup_fake_gh
   expect idle '["nothing_to_do"]'
   pr_view "{statusCheckRollup: [$(check_ok)], mergeStateStatus: \"BLOCKED\", reviewDecision: \"REVIEW_REQUIRED\"}"
-  expect idle '["nothing_to_do"]'
+  expect idle '["nothing_to_do","merge_blocked"]'
+}
+
+# gh-pr-check の手順1の表（終えるか・伝えること）。action・reasons・respond の組み合わせを確かめる。
+# 手順1は、respond が true なら指摘・質問・CI の失敗の一覧（手順2以降）へ進み、false なら何も変えずに終えて reasons を伝える。
+#
+#   PR の状態 / 入力                                       action    reasons                                         respond
+#   OPEN でない（失敗した CI・指摘があっても）              idle      not_open                                         false
+#   コメントも CI の失敗も無い、マージできる（CLEAN）       idle      nothing_to_do                                    false
+#   コメントが無く、CI が実行中                             wait      ci_pending                                       false
+#   コメントが無く、マージできない（BLOCKED）               idle      nothing_to_do, merge_blocked                     false
+#   コメントが無く、CI が実行中で、BLOCKED                  wait      ci_pending, merge_blocked                        false
+#   本文の無い承認だけ                                      idle      nothing_to_do                                    false
+#   返事待ちの項目だけ（返事をしていないものは無い）        idle      nothing_to_do, awaiting_replies                  true
+#   返事待ちの項目があり、CI が実行中で、BLOCKED            wait      ci_pending, awaiting_replies, merge_blocked      true
+#   返事をしていない PR のコメント                          act       unanswered_comments                              true
+#   CI の失敗                                               act       ci_failed                                        true
+#   コンフリクトで、返事をしていない PR のコメント          conflict  conflicting                                      true
+#   ドラフトで、返事をしていない PR のコメント              idle      draft                                            true
+#   フォークで、CI の失敗                                   idle      fork                                             true
+#   マージキューにあり、返事をしていない PR のコメント      wait      in_merge_queue                                   true
+expect_check() {
+  run_script pr-watch.sh --pr 5
+  assert_success
+  assert_equal "$(jq -c '[.action, .reasons, .respond]' <<<"$output")" "[\"$1\",$2,$3]"
+}
+
+@test "表（gh-pr-check の手順1）: 終えるか（respond）と伝えること（reasons）の組み合わせ" {
+  setup_fake_gh
+  failed='{__typename: "CheckRun", name: "t", status: "COMPLETED", conclusion: "FAILURE"}'
+  running='{__typename: "CheckRun", name: "t", status: "IN_PROGRESS"}'
+  bob_c='{id: "C1", author: {login: "bob"}, body: "なぜ？", createdAt: "2026-10-01T00:05:00Z", url: "u"}'
+  me_c='{id: "C2", author: {login: "me"}, body: "理由です", createdAt: "2026-10-01T00:06:00Z", url: "u"}'
+
+  pr_view "{state: \"CLOSED\", statusCheckRollup: [$failed], comments: [$bob_c]}"
+  expect_check idle '["not_open"]' false
+  pr_view '{}'
+  expect_check idle '["nothing_to_do"]' false
+  pr_view "{statusCheckRollup: [$running]}"
+  expect_check wait '["ci_pending"]' false
+  pr_view '{mergeStateStatus: "BLOCKED"}'
+  expect_check idle '["nothing_to_do","merge_blocked"]' false
+  pr_view "{mergeStateStatus: \"BLOCKED\", statusCheckRollup: [$running]}"
+  expect_check wait '["ci_pending","merge_blocked"]' false
+  pr_view '{reviews: [{id: "R1", author: {login: "alice"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:05:00Z"}]}'
+  expect_check idle '["nothing_to_do"]' false
+
+  pr_view "{comments: [$bob_c, $me_c]}"
+  expect_check idle '["nothing_to_do","awaiting_replies"]' true
+  pr_view "{mergeStateStatus: \"BLOCKED\", statusCheckRollup: [$running], comments: [$bob_c, $me_c]}"
+  expect_check wait '["ci_pending","awaiting_replies","merge_blocked"]' true
+  pr_view "{comments: [$bob_c]}"
+  expect_check act '["unanswered_comments"]' true
+  pr_view "{statusCheckRollup: [$failed]}"
+  expect_check act '["ci_failed"]' true
+
+  # action が act でなくても、指摘や CI の失敗があれば respond は true（無人の見回りの対象外・待ちの PR でも、手元では対応する）
+  pr_view "{mergeable: \"CONFLICTING\", mergeStateStatus: \"DIRTY\", comments: [$bob_c]}"
+  expect_check conflict '["conflicting"]' true
+  pr_view "{isDraft: true, comments: [$bob_c]}"
+  expect_check idle '["draft"]' true
+  watch '{isCrossRepository: true}'
+  pr_view "{statusCheckRollup: [$failed]}"
+  expect_check idle '["fork"]' true
+  watch '{mergeQueueEntry: {state: "QUEUED"}}'
+  pr_view "{comments: [$bob_c]}"
+  expect_check wait '["in_merge_queue"]' true
 }
 
 @test "--pr を省略すると今のブランチの PR を見る。PR の番号が正しくなければ使い方の誤りで止まる" {
@@ -269,7 +369,7 @@ expect() {
   echo '{"pr_check": {"handlers": {"CodeRabbitAI[bot]": "coderabbit-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
   thread '[["coderabbitai","直してください"],["me","直しました"]]'
   write_threads
-  expect idle '["nothing_to_do"]'
+  expect idle '["nothing_to_do","awaiting_replies"]'
   assert_equal "$(jq -c .details.waiting_for <<<"$output")" '[]'
 }
 
