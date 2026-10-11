@@ -52,6 +52,9 @@ done
 case "$expect" in
   *[!0-9]*) dw_die "--expect は 0 以上の整数にしてください: $expect" 64 ;;
 esac
+# 先頭の 0 を除いた桁数を 9 桁までにする（jq の数は浮動小数なので、桁数が多いと [ -eq ] で比べられなくなる）
+trimmed="${expect#"${expect%%[!0]*}"}"
+[ "${#trimmed}" -le 9 ] || dw_die "--expect が大きすぎます（9 桁までの整数にしてください）: $expect" 64
 [ -f "$file" ] || dw_die "範囲外の指摘の記録のファイルがありません: $file（指摘が無くても [] を書いてください）" 64
 
 jq -e 'type == "array"' "$file" >/dev/null 2>&1 \
@@ -72,7 +75,7 @@ problems="$(jq -r '
   | .key as $i | .value as $e
   | (if ($e | type) != "object" then "オブジェクトではありません"
      elif ($e.summary | nonblank | not) then "summary が空です"
-     elif (["filed", "duplicate", "breaking", "limit", "failed"] | index($e.disposition) | not) then "disposition が使えない値です（\($e.disposition // "なし")）"
+     elif ($e.disposition | IN("filed", "duplicate", "breaking", "limit", "failed") | not) then "disposition が使えない値です（\($e.disposition // "なし" | tojson)）"
      elif ($e.disposition == "filed" or $e.disposition == "duplicate") and (($e.issue | posint) | not)
        then "\($e.disposition) なのに、issue に Issue の番号がありません"
      elif ($e.disposition == "breaking" or $e.disposition == "limit" or $e.disposition == "failed") and (($e.reason | nonblank) | not)

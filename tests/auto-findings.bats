@@ -125,3 +125,32 @@ run_findings() { run_script auto-findings.sh --file "$TMP/f.json" "$@"; }
   assert_success
   assert_output --partial '使い方: auto-findings.sh --file PATH --expect N'
 }
+
+@test "disposition が文字列でない値（配列など）は、使えない値として終了コード 2・1行で止まる" {
+  for v in '["filed"]' '{"a":1}' 1 true; do
+    write_ledger "[{\"summary\":\"s\",\"disposition\":$v,\"issue\":3,\"reason\":\"r\"}]"
+    run_findings --expect 1
+    assert_failure 2
+    assert_output --partial 'disposition が使えない値です'
+    assert_equal "$(wc -l <<<"$output" | tr -d ' ')" 1
+  done
+}
+
+@test "--expect に桁数の多い巨大な値を渡しても、1行のエラーで止まる" {
+  write_ledger '[]'
+  run_findings --expect 100000000000000000000
+  assert_failure 64
+  assert_output --partial '--expect'
+  assert_equal "$(wc -l <<<"$output" | tr -d ' ')" 1
+  # 先頭の 0 が多くても、数としては小さい値なので通る
+  run_findings --expect 0000000000000000000000
+  assert_success
+}
+
+@test "summary に改行があっても、エラーのメッセージは1行になる" {
+  write_ledger '[{"summary":"a.sh:1\n二行目","disposition":"filed"},{"summary":"b.sh:2","disposition":"limit"}]'
+  run_findings --expect 2
+  assert_failure 2
+  assert_equal "$(wc -l <<<"$output" | tr -d ' ')" 1
+  assert_output --partial 'a.sh:1 二行目'
+}
