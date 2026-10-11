@@ -236,7 +236,7 @@ check_stash() {
 # 名前を変えさせないよう確かめない
 # 使い方: check_branch_name <名前>
 check_branch_name() {
-  local name="$1" out
+  local name="$1" out errf err rc
   case "$name" in
     '' | *'$'* | *'`'*) return 0 ;;
   esac
@@ -246,10 +246,25 @@ check_branch_name() {
   [ "$name" != "$base_of" ] || return 0
   gc_git show-ref --verify --quiet "refs/heads/$name" && return 0
   ! gc_remote_has "$name" || return 0
-  # 規約に合わないときだけ終了コード 1（設定を読めないなどは 2）
-  out="$( (CDPATH='' cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>/dev/null)" \
-    && return 0
-  [ $? -eq 1 ] || return 0
+  # 規約に合わないときは終了コード 1、設定の誤り（branch.pattern・labels.types など）は 2（標準エラーに1行）。
+  # config.sh の失敗（設定を読めない）も 2 だが、メッセージが「設定を読めません」なので、設定の誤りとは区別して何も伝えない
+  errf="$(mktemp)" || return 0
+  out="$( (CDPATH='' cd "$gc_root" && WORKFLOW_REPO_ROOT="$gc_root" "$BASH" "$DW_SCRIPTS_DIR/branch-name.sh" --check "$name") 2>"$errf")" \
+    && { rm -f "$errf"; return 0; }
+  rc=$?
+  err="$(tail -n 1 "$errf" 2>/dev/null || true)"
+  rm -f "$errf"
+  if [ "$rc" -eq 2 ]; then
+    err="${err#error: }"
+    case "$err" in
+      '' | '設定を読めません') return 0 ;;
+    esac
+    # フックは止めない。設定の誤りを警告に足す
+    warnings+=("ブランチ名 ${name} が規約に合うかは確かめられません（設定の誤り: ${err}）。")
+    nwarn=$((nwarn + 1))
+    return 0
+  fi
+  [ "$rc" -eq 1 ] || return 0
   warnings+=("ブランチ名 ${name} は規約に合いません（$(jq -r '.reason // empty' <<<"$out" 2>/dev/null || true)）。")
   nwarn=$((nwarn + 1))
 }

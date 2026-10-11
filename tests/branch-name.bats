@@ -477,3 +477,24 @@ SH
     assert_output "fix|17"
   done
 }
+
+@test "--check は、名前の形に問題があっても設定を先に検査し、設定の誤りは終了コード 2 にする" {
+  local c
+  for c in '{"branch":{"pattern":"^(feat"},"labels":{"types":["feat"]}}' \
+    '{"branch":{"pattern":5},"labels":{"types":["feat"]}}' \
+    '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":"feat"}}' \
+    '{"branch":"x"}'; do
+    printf '%s\n' "$c" >.claude/dev-workflow/config.local.json
+    # 大文字を含む名前（形の問題）と、規約に合わない名前
+    run_script branch-name.sh --check Feat/17-Add
+    assert_failure 2
+    assert_output --partial "設定を直してください"
+    assert_equal "${#lines[@]}" 1
+  done
+}
+
+@test "--check は、設定に誤りが無ければ、名前の形の問題を今までどおり終了コード 1 で報告する" {
+  run_script branch-name.sh --check Feat/17-Add
+  assert_failure 1
+  assert_output --partial "小文字の英数字と - / 以外の文字があります"
+}
