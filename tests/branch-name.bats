@@ -498,3 +498,27 @@ SH
   assert_failure 1
   assert_output --partial "小文字の英数字と - / 以外の文字があります"
 }
+
+@test "--check とブランチの作成は、branch・labels 以外の節（review など）の型の誤りも、終了コード 2 と原因の1行で報告する" {
+  local v
+  for v in '"low"' 5 '[]'; do
+    echo "{\"review\": $v}" >.claude/dev-workflow/config.local.json
+    run_script branch-name.sh --check feat/17-add-login
+    assert_failure 2
+    assert_output --partial "review はオブジェクトにしてください"
+    run_script branch-name.sh --issue 17 --type feat --slug x
+    assert_failure 2
+    assert_output --partial "review はオブジェクトにしてください"
+  done
+}
+
+@test "branch・labels の節が壊れたときは、config.sh の節の検査でなく、branch.pattern・labels.types を名指しして報告する" {
+  echo '{"branch": "x"}' >.claude/dev-workflow/config.local.json
+  run_script branch-name.sh --check feat/17-add-login
+  assert_failure 2
+  assert_output --partial "branch.pattern を読めません"
+  refute_output --partial "branch はオブジェクトにしてください"
+  run_script branch-name.sh --issue 17 --type feat --slug x
+  assert_failure 2
+  assert_output --partial "branch.pattern を読めません"
+}
