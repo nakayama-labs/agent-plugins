@@ -383,3 +383,23 @@ write_proposed() {
   run cmp "$TMP/expected" docs/adr/000004-q.md
   assert_success
 }
+
+@test "--supersedes は、末尾に改行の無い ADR に改行を足さず、status 以外の行を変えない" {
+  mkdir -p docs/adr
+  printf -- '---\nstatus: "accepted"\nissue: 3\n---\n\n# 古い\n\n本文' >docs/adr/000003-old.md
+  run_script adr-create.sh --issue 11 --name new --template minimal --supersedes 000003-old.md
+  assert_success
+  printf -- '---\nstatus: "superseded by 000011-new"\nissue: 3\n---\n\n# 古い\n\n本文' >"$TMP/expected"
+  run cmp "$TMP/expected" docs/adr/000003-old.md
+  assert_success
+}
+
+@test "--accept は、末尾が空行で終わる ADR の空行の数を変えず、status と date の2行だけを書き換える" {
+  mkdir -p docs/adr
+  printf -- '---\nstatus: "proposed"\ndate: 2020-01-01\n---\n\n# 題\n\n本文\n\n\n' >docs/adr/000003-p.md
+  run_script adr-create.sh --accept 000003-p.md --date 2026-10-11
+  assert_success
+  printf -- '---\nstatus: "accepted"\ndate: 2026-10-11\n---\n\n# 題\n\n本文\n\n\n' >"$TMP/expected"
+  run cmp "$TMP/expected" docs/adr/000003-p.md
+  assert_success
+}
