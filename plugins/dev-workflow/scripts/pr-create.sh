@@ -108,6 +108,8 @@ fi
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 base="$(dw_base_branch "$config")"
+# labels.types が文字列の配列でなければ、設定の誤りとして終了コード 2 で止める（type ラベルの照合に使う）
+types_cfg="$(dw_labels_types "$config")"
 
 actions='[]'
 note() { actions="$(jq -c --arg a "$1" '. + [$a]' <<<"$actions")"; }
@@ -125,7 +127,7 @@ changes="$(git -C "$repo_root" status --porcelain --untracked-files=no)" \
 # PR の番号なら止まる（dw_read_issue）
 issue_json="$(dw_read_issue "$issue" number,title,state,labels,body)"
 labels="$(jq -c '[.labels[].name]' <<<"$issue_json")"
-types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" "$DW_JQ_ISSUE_TYPES"' issue_types($t)' <<<"$labels")"
+types="$(jq -c --argjson t "$types_cfg" "$DW_JQ_ISSUE_TYPES"' issue_types($t)' <<<"$labels")"
 [ "$(jq length <<<"$types")" = 1 ] \
   || dw_die "Issue #${issue} の type ラベルを1つにしてください（今は $(jq -r 'if length == 0 then "なし" else join(", ") end' <<<"$types")）" 2
 type="$(jq -r '.[0]' <<<"$types")"

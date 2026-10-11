@@ -102,7 +102,23 @@ done
 # shellcheck disable=SC2119 # 引数（フィルター）は省く
 sources_json="$(printf '%s\n' ${sources[@]+"${sources[@]}"} | dw_json_lines_nonempty)"
 
-printf '%s\n' "${layers[@]}" \
+merged="$(printf '%s\n' "${layers[@]}" \
   | jq -s --argjson guides "$guides" --argjson sources "$sources_json" --argjson set_up "$set_up" \
-      'reduce .[] as $l ({}; . * $l) + {guides: $guides, sources: $sources, set_up: $set_up}' \
-  | jq -r "$filter"
+      'reduce .[] as $l ({}; . * $l) + {guides: $guides, sources: $sources, set_up: $set_up}')"
+
+# 設定の節（プラグインの既定がオブジェクトの項目。review・commit・pr など）は、オブジェクト（か null）でなければならない。
+# 層のどれかが文字列・数値・配列にすると、合わせた結果の節がそうなり、各スクリプトの `.review.max_rounds` のような読み方が
+# jq の生のエラーで止まるので、ここで1か所にまとめて、設定の誤りと分かる1行と終了コード 2 で止める。
+# 環境変数 DW_CONFIG_SKIP_SECTIONS（空白区切りの節の名前。例：「branch labels」）に挙げた節は検査しない（branch-name.sh が、
+# branch・labels の誤りを自分の検査で名指しして報告するため）。ほかの節は検査する
+# shellcheck disable=SC2016 # jq の変数を bash に展開させない
+bad="$(jq -r --slurpfile d "$DW_PLUGIN_ROOT/defaults/workflow.json" --arg skip "${DW_CONFIG_SKIP_SECTIONS:-}" '
+  . as $c | ($skip | split(" ")) as $skipped
+  | [$d[0] | to_entries[] | select(.value | type == "object") | .key | select(. as $k | $skipped | index($k) | not)]
+  | map(select(. as $k | ($c[$k] | type) as $t | $t != "object" and $t != "null"))
+  | if length == 0 then empty
+    else .[0] as $k | "\($k) はオブジェクトにしてください（今の値: \($c[$k] | tojson)）" end' <<<"$merged")" \
+  || dw_die "設定の節を検査できませんでした（jq が失敗しました）" 2
+[ -z "$bad" ] || dw_die "設定の誤り: ${bad}。設定ファイルを直してください" 2
+
+jq -r "$filter" <<<"$merged"

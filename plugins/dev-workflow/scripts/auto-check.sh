@@ -103,6 +103,9 @@ if [ -z "$hold" ]; then
 fi
 dw_check_hold_column "$config"
 
+# labels.types が文字列の配列でなければ、設定の誤りとして終了コード 2 で止める（type ラベルの照合に使う）
+types_cfg="$(dw_labels_types "$config")"
+
 repo_root="$(dw_repo_root)" || dw_die "リポジトリの中で実行してください" 64
 main_root="$(dw_main_root "$repo_root")" || dw_die "メインのワークツリーが分かりません"
 # closedByPullRequestsReferences を読む（前の作業のブランチを探す。issue-branches.sh と同じ）
@@ -111,7 +114,7 @@ dw_require_gh_version "$DW_GH_MIN_VERSION" "サブ Issue と Issue を閉じる 
 # PR の番号なら止まる（dw_read_issue）
 issue_json="$(dw_read_issue "$issue" number,title,state,labels,body,subIssuesSummary,closedByPullRequestsReferences)"
 labels="$(jq -c '[.labels[].name]' <<<"$issue_json")"
-types="$(jq -c --argjson t "$(jq -c '.labels.types' <<<"$config")" "$DW_JQ_ISSUE_TYPES"' issue_types($t)' <<<"$labels")"
+types="$(jq -c --argjson t "$types_cfg" "$DW_JQ_ISSUE_TYPES"' issue_types($t)' <<<"$labels")"
 # GitHub と同じく、ラベルの名前は大文字と小文字を区別せずに照合する
 breaking="$(jq --arg b "$DW_BREAKING_LABEL" 'any(.[]; ascii_downcase == $b)' <<<"$labels")"
 summary="$(jq -c --argjson t "$types" --argjson b "$breaking" \

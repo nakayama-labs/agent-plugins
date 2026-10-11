@@ -600,6 +600,24 @@ dw_check_branch_pattern() {
   [ -z "$msg" ] || { printf '%s\n' "$msg"; return 1; }
 }
 
+# 設定（config.sh の出力）の labels.types を、文字列の配列として検査し、JSON（1行）で出力する。文字列の配列でない
+# （文字列・null・数値・文字列でない値を含む配列など）なら、設定の誤りと分かる1行を出して終了コード 2 で止まる
+# （jq の「Cannot iterate over」などの生のエラーや、文字列への index による誤った受け入れにしないため。
+# DW_JQ_BRANCH_RE の branch_types_not_strings と同じ文）
+# 使い方: types_cfg="$(dw_labels_types "$config")"
+dw_labels_types() {
+  local out
+  # shellcheck disable=SC2016 # jq のプログラムなので、$ は展開しない
+  out="$(jq -r '(.labels.types) as $t
+    | if ($t | type) == "array" and all($t[]; type == "string") then "=" + ($t | tojson)
+      else "!labels.types（\($t | tojson)）が文字列の配列ではありません。設定を直してください" end' <<<"$1")" \
+    || dw_die "labels.types を検査できませんでした（jq が失敗しました）" 2
+  case "$out" in
+    '!'*) dw_die "${out#!}" 2 ;;
+  esac
+  printf '%s\n' "${out#=}"
+}
+
 # ブランチ名を branch.pattern に当て、type と Issue の番号を「<type>|<番号>」で出力する（無いものは空）
 # 区切りを空白にすると、read が先頭の空白を外して、type が空のときに番号を type と取り違える
 # 設定の検査（dw_check_branch_pattern と同じ）と解析は、1回の jq で行う。設定に誤りがあれば、
@@ -1229,7 +1247,9 @@ DW_BREAKING_LABEL=breaking
 # GitHub と同じく、ラベルの名前は大文字と小文字を区別せずに照合する（Fix のラベルも fix として読み、Fix と fix は1つと数える）。
 # 順はラベルの順。type ラベルを読むスクリプト（pr-create.sh・branch-name.sh・review-perspectives.sh・auto-check.sh）で、照合をそろえる。
 # source した側で使う
-# 使い方: jq --argjson t "$(jq -c .labels.types <<<"$config")" "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t)'
+# labels.types は、先に dw_labels_types で検査してから渡す（文字列の配列でなければ、設定の誤りとして終了コード 2 で止まる）
+# 使い方: types_cfg="$(dw_labels_types "$config")"
+#         jq --argjson t "$types_cfg" "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t)'
 # shellcheck disable=SC2016,SC2034 # jq のプログラムなので、$ は展開しない
 DW_JQ_ISSUE_TYPES='
   def issue_types($t):

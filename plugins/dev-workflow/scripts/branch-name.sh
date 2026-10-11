@@ -61,26 +61,26 @@ problem() {
   esac
 }
 
+# 設定は、名前の形に問題があっても先に検査する（設定の誤りは、名前の形の問題（1）に隠さず、終了コード 2 にする）。
+# branch・labels の節の誤りは、この後の検査（branch_config）が原因を名指しして報告するので、config.sh の節の検査は、この2つの節だけ飛ばす（ほかの節の型の誤りは config.sh が報告する）
 if [ -n "$check" ]; then
   reason="$(problem "$check")"
-  if [ -z "$reason" ]; then
-    # 設定を読めないときは、規約に合わない（1）と区別できるよう 2 で終わる
-    config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません" 2
-    # 設定の検査と、branch.pattern に合うかの判定を、1回の jq で行う（lib/common.sh の DW_JQ_BRANCH_RE。
-    # dw_parse_branch・dw_issue_branches と同じ正規表現）。設定の誤り（正しくない正規表現・文字列でない branch.pattern など）は、
-    # ブランチ名が合わない（1）ではなく設定の誤り（2）にする。誤りは「!」、合わなければ「-」と branch.pattern、合えば「+」を出す
-    # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
-    out="$(dw_jq_text -r --arg b "$check" "$DW_JQ_BRANCH_RE"'
-      $dw_in | branch_config(false)
-      | if has("e") then "!" + .e
-        elif (.c | branch_re) as $re | $re != null and ($b | test($re)) then "+"
-        else "-" + (.c.branch.pattern | if type == "string" then . else tojson end) end' <<<"$config")" \
-      || dw_die "branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）" 2
-    case "$out" in
-      '!'*) dw_die "${out#!}" 2 ;;
-      -*) reason="branch.pattern（${out#-}）の形になっていません" ;;
-    esac
-  fi
+  # 設定を読めないときは、規約に合わない（1）と区別できるよう 2 で終わる
+  config="$(DW_CONFIG_SKIP_SECTIONS='branch labels' "$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません" 2
+  # 設定の検査と、branch.pattern に合うかの判定を、1回の jq で行う（lib/common.sh の DW_JQ_BRANCH_RE。
+  # dw_parse_branch・dw_issue_branches と同じ正規表現）。設定の誤り（正しくない正規表現・文字列でない branch.pattern など）は、
+  # ブランチ名が合わない（1）ではなく設定の誤り（2）にする。誤りは「!」、合わなければ「-」と branch.pattern、合えば「+」を出す
+  # shellcheck disable=SC2016 # jq の変数（$b・$re）を bash に展開させない
+  out="$(dw_jq_text -r --arg b "$check" "$DW_JQ_BRANCH_RE"'
+    $dw_in | branch_config(false)
+    | if has("e") then "!" + .e
+      elif (.c | branch_re) as $re | $re != null and ($b | test($re)) then "+"
+      else "-" + (.c.branch.pattern | if type == "string" then . else tojson end) end' <<<"$config")" \
+    || dw_die "branch.pattern・labels.types の設定を検査できませんでした（jq が失敗しました）" 2
+  case "$out" in
+    '!'*) dw_die "${out#!}" 2 ;;
+    -*) [ -n "$reason" ] || reason="branch.pattern（${out#-}）の形になっていません" ;;
+  esac
   jq -n --arg b "$check" --arg r "$reason" '{branch: $b, valid: ($r == ""), reason: (if $r == "" then null else $r end)}'
   [ -z "$reason" ]
   exit
@@ -96,7 +96,7 @@ slug="$(printf '%s' "$slug" | LC_ALL=C tr '[:upper:]' '[:lower:]' \
   | LC_ALL=C sed -e 's/[^a-z0-9]/-/g' -e 's/--*/-/g' -e 's/^-//' -e 's/-$//' | cut -c1-40 | sed 's/-$//')"
 [ -n "$slug" ] || dw_die "短い説明に英数字がありません。英語で指定してください" 64
 
-config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
+config="$(DW_CONFIG_SKIP_SECTIONS='branch labels' "$BASH" "$DW_SCRIPTS_DIR/config.sh")"
 # 設定の誤りは、--check と同じく終了コード 2 で止める（lib/common.sh の DW_JQ_BRANCH_RE の branch_config(true)）。type を
 # 確かめる前に行い、壊れた labels.types を「type は labels.types のどれかに」と取り違えない。ブランチ名を作るには、
 # 検査では通す無い・null の branch.pattern と labels.types も要るので、ここで止める（jq -r が「null」という名前にするため）。

@@ -1183,3 +1183,44 @@ EOF
     'git --git-dir ~/.dotfiles --work-tree ~ push --force' \
     'GIT_DIR=~/.dotfiles GIT_WORK_TREE=~ git push --force'
 }
+
+# 設定の誤りがあるときの警告（ブランチ名が規約に合うかは確かめられない）。フックは止めない
+config_warned() {
+  local c
+  for c in "$@"; do
+    run_hook "git switch -c feat/17-x"
+    [ "$status" -eq 0 ] || fail "止めてしまった（${status}）: $c / $output"
+    jq -e '
+      .hookSpecificOutput.hookEventName == "PreToolUse"
+      and .hookSpecificOutput.permissionDecision == null
+      and .systemMessage == .hookSpecificOutput.additionalContext
+      and (.systemMessage | contains("設定の誤り"))
+    ' <<<"$output" >/dev/null || fail "設定の誤りの警告が出ていない: $c / $output"
+  done
+}
+
+@test "ブランチを作るとき、branch.pattern・labels.types の誤りは、フックを止めずに設定の誤りとして警告する" {
+  local c
+  for c in '{"branch":{"pattern":"^(feat"}}' \
+    '{"branch":{"pattern":5}}' \
+    '{"branch":{"pattern":["x"]}}' \
+    '{"labels":{"types":"feat"}}' \
+    '{"labels":{"types":["feat", 1]}}' \
+    '{"labels":{"types":false}}' \
+    '{"branch":"x"}'; do
+    printf '%s\n' "$c" >.claude/dev-workflow/config.local.json
+    config_warned "$c"
+  done
+  printf '%s\n' '{"branch":{"pattern":"^(feat"}}' >.claude/dev-workflow/config.local.json
+  run_hook "git switch -c feat/17-x"
+  assert_output --partial "正規表現として正しくありません"
+  # 名前の形の問題（大文字）があっても、設定の誤りを警告する
+  run_hook "git switch -c Feat/17-X"
+  assert_success
+  assert_output --partial "設定の誤り"
+}
+
+@test "設定を読めないとき（config.sh の失敗）は、今までどおり何も伝えずに通す" {
+  echo '[1]' >.claude/dev-workflow/config.local.json
+  silent "git switch -c feat/17-x"
+}

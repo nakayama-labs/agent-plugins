@@ -717,3 +717,26 @@ auto_branch() {
   assert_success
   assert_equal "$(skipped_reason emoji-path)" "差分のファイルが paths（${pattern}）に当たらない"
 }
+
+@test "--auto は、review がオブジェクトでなければ、jq の生のエラーでなく、節を名指しした1行で止まる" {
+  auto_branch feat/17-add-thing
+  for v in '"low"' 5 '[]'; do
+    echo "{\"review\": $v}" >.claude/dev-workflow/config.local.json
+    run_script review-perspectives.sh --auto
+    assert_failure 2
+    # 1行目が原因（config.sh）。2行目は呼び出し側の「設定を読めません」
+    assert_equal "${lines[0]}" "error: 設定の誤り: review はオブジェクトにしてください（今の値: ${v}）。設定ファイルを直してください"
+    refute_output --partial "Cannot index"
+  done
+}
+
+@test "--auto は、labels.types が文字列の配列でなければ、設定の誤りの1行と終了コード 2 で止まる" {
+  auto_branch feat/17-add-thing
+  fake_issue 17 '["fix"]'
+  for v in '"xfeat"' null 5 '[1]' '["fix", null]' '{}'; do
+    echo "{\"labels\": {\"types\": $v}}" >.claude/dev-workflow/config.local.json
+    run_script review-perspectives.sh --auto
+    assert_failure 2
+    assert_output "error: labels.types（$(jq -nc "$v")）が文字列の配列ではありません。設定を直してください"
+  done
+}

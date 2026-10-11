@@ -294,3 +294,35 @@ load test_helper
   assert_success
   assert_equal "$(jq -r 'map(select(endswith("😀😀-user/config.json"))) | length' <<<"$output")" 1
 }
+
+@test "設定の節がオブジェクトでない（文字列・数値・配列）とき、config.sh は節を名指しした1行と終了コード 2 で止まる" {
+  local sec v
+  for sec in review commit pr project status story_point checks sub_issues labels branch adr pr_check auto; do
+    for v in '"low"' 5 '[1]' true; do
+      echo "{\"$sec\": $v}" >.claude/dev-workflow/config.json
+      run_script config.sh
+      assert_failure 2
+      assert_output "error: 設定の誤り: ${sec} はオブジェクトにしてください（今の値: ${v}）。設定ファイルを直してください"
+    done
+  done
+}
+
+@test "個人の上書き（local）で節を文字列にしても、config.sh は jq の生のエラーでなく1行で止まる。null は節の無効として通す" {
+  echo '{"review": "low"}' >.claude/dev-workflow/config.local.json
+  run_script config.sh '.review.max_rounds'
+  assert_failure 2
+  assert_output --partial "review はオブジェクトにしてください"
+  refute_output --partial "Cannot index"
+  assert_equal "${#lines[@]}" 1
+  echo '{"review": null}' >.claude/dev-workflow/config.local.json
+  run_script config.sh '.review.max_rounds'
+  assert_success
+  assert_output "null"
+}
+
+@test "既定にない項目や、オブジェクトでない既定の項目（language など）は、節の検査の対象にしない" {
+  echo '{"language": "en", "my_section": "x"}' >.claude/dev-workflow/config.json
+  run_script config.sh .language
+  assert_success
+  assert_output "en"
+}

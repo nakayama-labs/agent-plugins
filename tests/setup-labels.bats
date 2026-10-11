@@ -297,3 +297,16 @@ assert_no_calls() {
   assert_equal "$(jq -r '.labels.created | index("only-home")' <<<"$json")" null
   assert_equal "$(jq -r '.labels.created | index("feat") != null' <<<"$json")" true
 }
+
+@test "labels.types が文字列の配列でなければ、ラベルに触れずに、設定の誤りの1行と終了コード 2 で止まる" {
+  setup_fake_gh
+  current "$(github_defaults)"
+  local v
+  for v in '"xfeat"' null 5 '["feat", null]'; do
+    echo "{\"labels\": {\"types\": $v}}" >.claude/dev-workflow/config.local.json
+    run_setup
+    assert_failure 2
+    assert_output "error: labels.types（$(jq -nc "$v")）が文字列の配列ではありません。設定を直してください"
+    assert_no_calls
+  done
+}

@@ -477,3 +477,48 @@ SH
     assert_output "fix|17"
   done
 }
+
+@test "--check は、名前の形に問題があっても設定を先に検査し、設定の誤りは終了コード 2 にする" {
+  local c
+  for c in '{"branch":{"pattern":"^(feat"},"labels":{"types":["feat"]}}' \
+    '{"branch":{"pattern":5},"labels":{"types":["feat"]}}' \
+    '{"branch":{"pattern":"{type}/{issue_number}-{slug}"},"labels":{"types":"feat"}}' \
+    '{"branch":"x"}'; do
+    printf '%s\n' "$c" >.claude/dev-workflow/config.local.json
+    # 大文字を含む名前（形の問題）と、規約に合わない名前
+    run_script branch-name.sh --check Feat/17-Add
+    assert_failure 2
+    assert_output --partial "設定を直してください"
+    assert_equal "${#lines[@]}" 1
+  done
+}
+
+@test "--check は、設定に誤りが無ければ、名前の形の問題を今までどおり終了コード 1 で報告する" {
+  run_script branch-name.sh --check Feat/17-Add
+  assert_failure 1
+  assert_output --partial "小文字の英数字と - / 以外の文字があります"
+}
+
+@test "--check とブランチの作成は、branch・labels 以外の節（review など）の型の誤りも、終了コード 2 と原因の1行で報告する" {
+  local v
+  for v in '"low"' 5 '[]'; do
+    echo "{\"review\": $v}" >.claude/dev-workflow/config.local.json
+    run_script branch-name.sh --check feat/17-add-login
+    assert_failure 2
+    assert_output --partial "review はオブジェクトにしてください"
+    run_script branch-name.sh --issue 17 --type feat --slug x
+    assert_failure 2
+    assert_output --partial "review はオブジェクトにしてください"
+  done
+}
+
+@test "branch・labels の節が壊れたときは、config.sh の節の検査でなく、branch.pattern・labels.types を名指しして報告する" {
+  echo '{"branch": "x"}' >.claude/dev-workflow/config.local.json
+  run_script branch-name.sh --check feat/17-add-login
+  assert_failure 2
+  assert_output --partial "branch.pattern を読めません"
+  refute_output --partial "branch はオブジェクトにしてください"
+  run_script branch-name.sh --issue 17 --type feat --slug x
+  assert_failure 2
+  assert_output --partial "branch.pattern を読めません"
+}
