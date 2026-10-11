@@ -67,9 +67,9 @@ expect_n="$(jq -n --arg e "$expect" '$e | tonumber')"
 [ "$total" -eq "$expect_n" ] \
   || dw_die "範囲外の指摘の記録は ${total} 件ですが、レビューの一覧から数え直すと ${expect_n} 件です。書き出し忘れた指摘を記録に足してください" 2
 
-# 同じ要約（前後の空白を除く）の指摘が複数あれば止まる（同じ指摘は1件と数えるので、重複は、別の指摘の書き出し忘れを隠す）
-dups="$(jq -r '[.[] | select(type == "object" and (.summary | type == "string")) | .summary | gsub("^\\s+|\\s+$"; "")]
-  | group_by(.) | map(select(length > 1) | .[0] | gsub("\\s+"; " ")) | join(" / ")' "$file")"
+# 同じ要約（前後の空白を除き、内側の連続する空白を1つにそろえる）の指摘が複数あれば止まる（同じ指摘は1件と数えるので、重複は、別の指摘の書き出し忘れを隠す）
+dups="$(jq -r '[.[] | select(type == "object" and (.summary | type == "string")) | .summary | gsub("^\\s+|\\s+$"; "") | gsub("\\s+"; " ")]
+  | group_by(.) | map(select(length > 1) | .[0]) | join(" / ")' "$file")"
 [ -z "$dups" ] || dw_die "範囲外の指摘の記録で summary が重複しています（同じ指摘は1件にして、書き出し忘れた指摘を足してください）: $dups" 2
 
 # 番号も理由も無い指摘、扱いが決まっていない指摘を探す（1件ずつ、位置と要約を添える）

@@ -176,3 +176,10 @@ run_findings() { run_script auto-findings.sh --file "$TMP/f.json" "$@"; }
   assert_output --partial 'summary が重複'
   assert_equal "$(wc -l <<<"$output" | tr -d ' ')" 1
 }
+
+@test "summary の重複は、内側の連続する空白も1つにそろえて比べる" {
+  write_ledger '[{"summary":"a.sh:10  foo","disposition":"filed","issue":9},{"summary":"a.sh:10 foo","disposition":"limit","reason":"r"}]'
+  run_findings --expect 2
+  assert_failure 2
+  assert_output --partial 'summary が重複'
+}
