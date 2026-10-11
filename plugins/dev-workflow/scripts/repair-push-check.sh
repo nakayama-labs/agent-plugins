@@ -8,6 +8,9 @@
 #     Claude の権限と設定に影響するため）
 #   - 名前そのもの（ファイル・シンボリックリンク・サブモジュール）も止めるのは、中身を差し替えられるため
 #   - 大文字と小文字は区別しない（区別しないファイルシステムでは、.Claude/ も .claude/ として読まれるため）
+#   - NTFS（Windows）で同じ名前になる別名も、同じ名前として止める（#356）。パスの各階層について、末尾の点と空白を除いた名前
+#     （.claude. や ".github "）と、8.3 形式の短い名前（.claude は CLAUDE~1、.github は GITHUB~1。~ の後の数字は問わない）を、
+#     .claude・.github と同じに扱う
 #   - 入れ子の .github/（docs/.github/ など）は、GitHub が読まないので止めない
 # push の対象に、止めるパスの変更が含まれていたら、push してはいけない（ok が false）。
 # 何も変えない（読むだけ。push もしない）。
@@ -69,8 +72,37 @@ git diff --name-only --no-renames -z "$against" HEAD >"$diff_file" \
 LC_ALL=C tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz' <"$diff_file" >"$lower_file" \
   || dw_die "パスを小文字にできませんでした" 2
 # パスに改行が入っていても壊れないよう -z で読む。元のパス（出力に使う）と、小文字の写し（照らすのに使う）を並べて読む
+# NTFS で同じ名前になる別名を、元の名前にそろえる。階層ごとに、末尾の点と空白を除き、8.3 形式の短い名前（claude~1・github~2）を
+# .claude・.github に直す（小文字にした後のパスを渡す）。bash 3.2 で動くよう、パラメータ展開とループだけで書く
+# 結果は変数 norm_path に入れる（$(...) は末尾の改行を落とすため）
+ntfs_norm() {
+  local rest="$1" comp
+  norm_path=""
+  while :; do
+    case "$rest" in
+      */*) comp="${rest%%/*}"; rest="${rest#*/}" ;;
+      *) comp="$rest"; rest="" ;;
+    esac
+    while :; do
+      case "$comp" in
+        *. | *" ") comp="${comp%?}" ;;
+        *) break ;;
+      esac
+    done
+    case "$comp" in
+      claude~*[!0-9]*) ;;
+      claude~[0-9]*) comp=.claude ;;
+      github~*[!0-9]*) ;;
+      github~[0-9]*) comp=.github ;;
+    esac
+    norm_path="${norm_path:+${norm_path}/}${comp}"
+    [ -n "$rest" ] || break
+  done
+}
+
 while IFS= read -r -d '' path && IFS= read -r -d '' lower <&3; do
-  case "$lower" in
+  ntfs_norm "$lower"
+  case "$norm_path" in
     .github | .github/* | .claude | .claude/* | */.claude | */.claude/*) ;;
     *) continue ;;
   esac

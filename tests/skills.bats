@@ -471,7 +471,7 @@ has() {
   done
   has "衝突の直し方" "$(sed -n '/^### 衝突の直し方/,/^### PR のコメント/p' <<<"$un")" \
     '指示役が次のとおりに決める' '止まる衝突' '`repair-push-check.sh` が止めるパス' '正本は `repair-push-check.sh --help`' '同じ範囲'
-  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run head=<head の sha> -->' 'git rev-parse origin/<ブランチ>' 'refs/remotes/origin/<ブランチ>' 'gh pr view <PR番号> --json headRefOid' 'scripts/repair-run-count.sh' "gh api --paginate --slurp 'repos/{owner}/{repo}/issues/<PR番号>/comments?per_page=100'" '全部を返さないことがあり' 'PR の head が `head` の sha から進んだもの' '数えない' '代わりに決めたこと' 'issues/comments/<ID>' '-X PATCH' '`--edit-last` は使わない' '追記する'
+  has "PR のコメント" "$(sed -n '/^### PR のコメント/,/^### 止まる/p' <<<"$un")" '<!-- dev-workflow:repair-run head=<head の sha> -->' 'git rev-parse origin/<ブランチ>' 'refs/remotes/origin/<ブランチ>' 'gh pr view <PR番号> --json headRefOid' 'scripts/repair-run-count.sh' "gh api --paginate --slurp 'repos/{owner}/{repo}/issues/<PR番号>/comments?per_page=100'" '全部を返さないことがあり' 'PR の head が `head` の sha から進んだもの' '数えない' "gh api --paginate --slurp 'repos/{owner}/{repo}/pulls/<PR番号>/commits?per_page=100'" '--commits' 'committer が無人の実行' '代わりに決めたこと' 'issues/comments/<ID>' '-X PATCH' '`--edit-last` は使わない' '追記する'
   has "止まる" "$(sed -n '/^### 止まる$/,/^### 結果を返す/p' <<<"$un")" \
     'git merge --abort' 'auto-hold.sh --issue <番号> --run-id <実行の id> --reason-file <ファイル> --repair-reason <理由の種類>' '`reason`（`dirty`・`same_failure`・`forbidden_paths` など）をそのまま渡し' '`other` を渡す' '本文には書かない' 'push はしない'
   # repair-run の head は、push 前の origin の head から取る。gh の headRefOid は、origin/<ブランチ> が無いときの1か所だけで使う

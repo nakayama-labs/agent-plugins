@@ -90,7 +90,7 @@ count() { run_script repair-run-count.sh "$@" <"$TMP/in.json"; }
   comments '人のコメント' >"$TMP/in.json"
   count --head "$A"
   assert_success
-  assert_equal "$(jq -c . <<<"$output")" '{"count":0,"pushed_heads":[],"legacy":0,"not_pushed":0,"runs":0}'
+  assert_equal "$(jq -c . <<<"$output")" '{"count":0,"pushed_heads":[],"legacy":0,"other_pushed":0,"not_pushed":0,"runs":0}'
 }
 
 @test "コメントが長くても（引数の長さの上限の 128 KiB を超えても）数える" {
@@ -226,4 +226,51 @@ comments_at() {
   count --head 1111111111111111111111111111111111111111 --since 2026-10-10T00:00:00Z
   assert_success
   assert_equal "$(jq -c '.pushed_heads' <<<"$output")" "[\"$A\",\"$B\",\"$C\"]"
+}
+
+# 使い方: commit <sha> <親の sha> <committer のログイン> ... → gh api の pulls/<番号>/commits の形（配列の配列）
+commits_json() {
+  jq -n '[[$ARGS.positional as $p | range(0; $p | length; 3) | $p[.:.+3] | {sha: .[0], parents: [{sha: .[1]}], committer: (if .[2] == "" then null else {login: .[2]} end)}]]' --args "$@"
+}
+BOT_LOGINS='bot[bot]'  # comments() の投稿者は bot
+
+@test "bot など人以外の push で head が進んだ回は、無人の push が失敗していても数えない（#348）" {
+  # A の上に別の bot が B を push した（無人の実行は A から push しようとして失敗し、PR の head は B）
+  comments "$(run_mark "$A")" >"$TMP/in.json"
+  commits_json "$B" "$A" 'other[bot]' >"$TMP/commits.json"
+  count --head "$B" --logins "$BOT_LOGINS" --commits "$TMP/commits.json"
+  assert_success
+  assert_equal "$(jq -c '[.count, .pushed_heads, .other_pushed]' <<<"$output")" '[0,[],1]'
+}
+
+@test "head が進んだ先のコミットの committer が無人の実行なら数える（大文字小文字と [bot] は問わない）" {
+  comments "$(run_mark "$A")" "$(run_mark "$B")" >"$TMP/in.json"
+  commits_json "$B" "$A" 'Bot' "$C" "$B" 'other[bot]' >"$TMP/commits.json"
+  count --head "$C" --logins "$BOT_LOGINS" --commits "$TMP/commits.json"
+  assert_success
+  assert_equal "$(jq -c '[.count, .pushed_heads, .other_pushed]' <<<"$output")" "[1,[\"$A\"],1]"
+}
+
+@test "進んだ先のコミットが一覧に無い・committer が読めないときは、数える側に倒す" {
+  comments "$(run_mark "$A")" "$(run_mark "$B")" >"$TMP/in.json"
+  commits_json "$C" "$B" '' >"$TMP/commits.json"
+  count --head "$C" --logins "$BOT_LOGINS" --commits "$TMP/commits.json"
+  assert_success
+  assert_equal "$(jq -c '[.count, .other_pushed]' <<<"$output")" '[2,0]'
+}
+
+@test "--commits が無ければ、head が進んだ回をすべて数える（今までどおり）" {
+  comments "$(run_mark "$A")" >"$TMP/in.json"
+  count --head "$B" --logins "$BOT_LOGINS"
+  assert_success
+  assert_equal "$(jq -c '[.count, .other_pushed]' <<<"$output")" '[1,0]'
+}
+
+@test "--commits が配列でない・ファイルが無いときは 64 で止まる" {
+  comments "$(run_mark "$A")" >"$TMP/in.json"
+  echo '{}' >"$TMP/commits.json"
+  count --head "$B" --commits "$TMP/commits.json"
+  assert_failure 64
+  count --head "$B" --commits "$TMP/none.json"
+  assert_failure 64
 }
