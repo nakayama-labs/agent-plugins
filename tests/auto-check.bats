@@ -394,3 +394,23 @@ run_check() {
   assert_success
   assert_equal "$(jq -c '[.action, .reasons, (.issue.body | length > 60000)]' <<<"$output")" '["proceed",[],true]'
 }
+
+@test "labels.types が文字列の配列でなければ、設定の誤りの1行と終了コード 2 で止まる" {
+  setup_auto
+  for v in '"xfeat"' null 5 '[1]' '["feat", null]'; do
+    set_config ".labels.types = $v"
+    run_check --issue 17
+    assert_failure 2
+    assert_output --partial "error: labels.types（$(jq -nc "$v")）が文字列の配列ではありません。設定を直してください"
+    refute_output --partial "Cannot iterate"
+    assert_equal "${#lines[@]}" 1
+  done
+}
+
+@test "auto.enabled が true でなければ、labels.types が壊れていても何もしない（無効のリポジトリは設定の誤りで止まらない）" {
+  setup_fake_gh
+  set_config '. + {auto: {enabled: false}, labels: {types: "x"}}'
+  run_check --issue 17
+  assert_success
+  assert_equal "$(jq -r .action <<<"$output")" disabled
+}

@@ -125,7 +125,7 @@ run_pr() {
   echo '{"pr": "x"}' >.claude/dev-workflow/config.local.json
   run_pr --issue 17 --body-file "$TMP/body.md"
   assert_failure 2
-  assert_output --partial "pr.title_pattern を読めません"
+  assert_output --partial "pr はオブジェクトにしてください"
   refute_output --partial "pr.title_pattern（null）"
   run git rev-parse -q --verify origin/feat/17-x
   assert_failure
@@ -1020,4 +1020,19 @@ fake_issue_tasks() {
   run_pr --issue 17 --body-file "$TMP/body.md"
   assert_success
   assert_equal "$(jq -r .body <<<"$json")" "$({ cat "$TMP/body.md"; printf '\nCloses #17'; })"
+}
+
+@test "labels.types が文字列の配列でなければ、設定の誤りの1行と終了コード 2 で止まり、push も PR の作成もしない" {
+  setup_branch
+  fake_issue 17 '["feat"]'
+  for v in '"xfeat"' null 5 '[1]' '["feat", null]'; do
+    echo "{\"labels\": {\"types\": $v}}" >.claude/dev-workflow/config.local.json
+    run_pr --issue 17 --body-file "$TMP/body.md"
+    assert_failure 2
+    assert_output --partial "error: labels.types（$(jq -nc "$v")）が文字列の配列ではありません。設定を直してください"
+    refute_output --partial "Cannot iterate"
+    assert_equal "${#lines[@]}" 1
+  done
+  run git ls-remote --heads origin feat/17-x
+  assert_output ""
 }

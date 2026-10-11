@@ -113,7 +113,9 @@ if $remote; then
       || dw_die "${repo_nwo} の .claude/dev-workflow/config.json を JSON として読めません" 2
   fi
 else
-  types="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" | jq -c '.labels.types // []')"
+  # labels.types が文字列の配列でなければ、設定の誤りとして終了コード 2 で止める（jq の生のエラーにしない）
+  config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
+  types="$(dw_labels_types "$config")"
 fi
 missing_types="$(jq -r --argjson l "$labels" '. - ($l | map(.name)) | join(", ")' <<<"$types")"
 [ -z "$missing_types" ] || dw_warn "設定の labels.types のうち、定義に無いラベルがあります: $missing_types"

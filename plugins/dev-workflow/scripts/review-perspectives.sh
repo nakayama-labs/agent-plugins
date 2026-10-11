@@ -110,6 +110,8 @@ if [ "$auto" = true ]; then
   fi
   auto_root="$(dw_repo_root)" || dw_die "git のリポジトリの中ではないので、絞り込めません" 2
   config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")" || dw_die "設定を読めません（config.sh で確かめてください）" 2
+  # labels.types が文字列の配列でなければ、設定の誤りとして終了コード 2 で止める（type ラベルの照合に使う）
+  types_cfg="$(dw_labels_types "$config")"
   max_rounds="$(jq -c '.review.max_rounds' <<<"$config")"
   case "$max_rounds" in
     "" | null | 0 | 0[0-9]* | *[!0-9]*) dw_die "review.max_rounds は1以上の整数にしてください: ${max_rounds}" 2 ;;
@@ -140,7 +142,7 @@ if [ "$auto" = true ]; then
     if ! command -v gh >/dev/null 2>&1; then
       dw_warn "gh が無いので Issue #${issue} を読めません。type はブランチ名から決めます"
     elif labels="$(dw_try_read_issue "$issue" labels 2>"$err")"; then
-      type="$(jq -r --argjson t "$(jq -c .labels.types <<<"$config")" \
+      type="$(jq -r --argjson t "$types_cfg" \
         "$DW_JQ_ISSUE_TYPES"' [.labels[].name] | issue_types($t) | if length == 1 then .[0] else "" end' <<<"$labels")"
       [ -z "$type" ] || type_from=issue
     else

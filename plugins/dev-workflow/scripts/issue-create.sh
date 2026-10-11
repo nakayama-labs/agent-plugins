@@ -90,8 +90,10 @@ fi
 
 # --- 1. 設定の確認 --------------------------------------------------------------
 config="$("$BASH" "$DW_SCRIPTS_DIR/config.sh")"
-jq -e --arg t "$type" '.labels.types | index($t)' <<<"$config" >/dev/null \
-  || dw_die "type は labels.types のどれかにしてください（$(jq -r '.labels.types | join(" / ")' <<<"$config")）: $type" 64
+# labels.types が文字列の配列でなければ、設定の誤りとして終了コード 2 で止める（文字列への index で誤って通さない）
+types_cfg="$(dw_labels_types "$config")"
+jq -e --arg t "$type" 'index($t)' <<<"$types_cfg" >/dev/null \
+  || dw_die "type は labels.types のどれかにしてください（$(jq -r 'join(" / ")' <<<"$types_cfg")）: $type" 64
 if [ -n "$sp" ]; then
   # 05 のような先頭の 0 は JSON の数値に揃える
   case "$sp" in

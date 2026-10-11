@@ -749,3 +749,27 @@ assert_no_changes() {
   assert_success
   assert_equal "$(args CreateIssue | jq -r .body)" "$(cat body.md)"
 }
+
+@test "labels.types が文字列の配列でなければ、Issue を作らず、設定の誤りの1行と終了コード 2 で止まる" {
+  setup_fake_gh
+  local v
+  for v in '"xfeat"' null 5 '[1]' '["feat", null]'; do
+    echo "{\"labels\": {\"types\": $v}}" >.claude/dev-workflow/config.local.json
+    run_create --title t --type feat
+    assert_failure 2
+    assert_output --partial "error: labels.types（$(jq -nc "$v")）が文字列の配列ではありません。設定を直してください"
+    refute_output --partial "Cannot iterate"
+    assert_equal "${#lines[@]}" 1
+    assert_no_changes
+  done
+}
+
+@test "story_point の節がオブジェクトでなければ、Issue を作らず、節を名指しした1行で止まる" {
+  setup_fake_gh
+  echo '{"story_point": "x"}' >.claude/dev-workflow/config.local.json
+  run_create --title t --type feat
+  assert_failure 2
+  assert_output --partial "story_point はオブジェクトにしてください"
+  refute_output --partial "Cannot index"
+  assert_no_changes
+}

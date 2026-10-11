@@ -135,7 +135,19 @@ commit_with() {
   echo '{"commit": "x"}' >.claude/dev-workflow/config.json
   commit_with "feat: ログインを追加する"
   assert_failure 2
-  assert_output --partial "commit.pattern を読めません"
+  assert_output --partial "commit はオブジェクトにしてください"
   refute_output --partial "commit.pattern（null）"
   assert_equal "${#lines[@]}" 1
+}
+
+@test "commit の節がオブジェクトでなければ、jq の生のエラーでなく、節を名指しした1行で止まる" {
+  setup_branch
+  for v in '"x"' 5 '[]'; do
+    echo "{\"commit\": $v}" >.claude/dev-workflow/config.json
+    commit_with "feat: ログインを追加する"
+    assert_failure 2
+    assert_output --partial "commit はオブジェクトにしてください"
+    refute_output --partial "Cannot index"
+    assert_equal "${#lines[@]}" 1
+  done
 }
