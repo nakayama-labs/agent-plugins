@@ -28,6 +28,9 @@ chmod +x bin/farewell.sh
 git add -A
 git commit -q -m "feat: 別れの挨拶のスクリプトを足す"
 git push -q -u origin feat/2-add-farewell
+# リモートの参照を packed-refs にまとめる。更新の push は、refs/heads/feat/2-add-farewell を新しいファイルとして作るので、
+# 実行後の「作られたファイル」の一覧に、このブランチの更新が確実に出る（push 済みの参照が loose のままだと、上書きが一覧に出るか分からない）
+git -C .fake-remote.git pack-refs --all
 # shellcheck disable=SC2016 # 書き出すスクリプトの中身なので、展開させない
 printf '#!/usr/bin/env bash\n# 別れの挨拶を出す。使い方: farewell.sh <名前>\nset -euo pipefail\nprintf '"'"'Goodbye, %%s!\\n'"'"' "$1"\n' >bin/farewell.sh
 git add -A

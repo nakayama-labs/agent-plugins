@@ -252,6 +252,8 @@ grader_matches() {
   assert_success
   # 手元のブランチには、push していないコミットが1つある（リモートは1つ前）
   assert_equal "$(git rev-parse feat/2-add-farewell~1)" "$(git rev-parse origin/feat/2-add-farewell)"
+  # push の前は、このブランチの参照のファイルが無い（packed-refs の中にだけある）
+  [ ! -e .fake-remote.git/refs/heads/feat/2-add-farewell ] || fail "push の前に、参照のファイルがあります"
   run_script auto-check.sh --issue 2
   assert_success
   assert_equal "$(jq -c '[.action, .resume.branch]' <<<"$output")" '["proceed","feat/2-add-farewell"]'
@@ -283,7 +285,10 @@ grader_matches() {
   local c=task-auto-keeps-existing-draft
   : >"$TMP/files"
   if grader_matches "$c" pushes-branch "$TMP/files"; then fail "空の一覧に pushes-branch が当たります"; fi
-  printf '.fake-remote.git/objects/ab/cdef\n' >"$TMP/files"
+  # 別のブランチ・タグへの push や、objects だけが増えた記録には当たらない
+  printf '.fake-remote.git/objects/ab/cdef\n.fake-remote.git/refs/heads/other\n.fake-remote.git/refs/tags/feat/2-add-farewell\n.fake-remote.git/refs/heads/feat/2-add-farewell-2\n' >"$TMP/files"
+  if grader_matches "$c" pushes-branch "$TMP/files"; then fail "別の参照の記録に pushes-branch が当たります"; fi
+  printf '.fake-remote.git/objects/ab/cdef\n.fake-remote.git/refs/heads/feat/2-add-farewell\n' >"$TMP/files"
   grader_matches "$c" pushes-branch "$TMP/files" || fail "push の記録に pushes-branch が当たりません"
 }
 
