@@ -46,8 +46,8 @@
 #
 # 出力の pr_base は PR のマージ先。既にある PR を使うならその PR のマージ先（設定の base_branch と違うことがある）、
 # 新しく作るなら作る PR のマージ先（base_branch）。設定の base_branch は base に出す。
-# 出力の merge_queue は、pr_base へのマージがマージキューを通すか（true・false。ブランチのキューを
-# 読めなければ null）。PR を出した後の案内（キューに入れるか、マージ先が進んだら取り込むか）を切り替えるのに使う
+# 出力の merge_queue は、pr_base へのマージがマージキューを通すか（true・false。GraphQL で読めなければ
+# ルールセットのルールで代え、それも読めなければ null）。PR を出した後の案内（キューに入れるか、マージ先が進んだら取り込むか）を切り替えるのに使う
 # 出力の ahead は、origin/<pr_base> より先のコミットの数（dry-run で手元に origin/<pr_base> が無く、確かめていなければ null）
 set -euo pipefail
 

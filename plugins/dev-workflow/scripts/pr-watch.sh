@@ -103,11 +103,16 @@ now="${PR_WATCH_NOW:-$(date -u +%s)}"
 # 今の時刻は PR_WATCH_NOW があればそれにそろえる（環境に残った DW_QUEUE_NOW には負けない。時計を 2 つにしない）
 [ -z "${PR_WATCH_NOW:-}" ] || export DW_QUEUE_NOW="$PR_WATCH_NOW"
 dw_check_queue_now
-qerr="$(mktemp)"
-mq="$(dw_merge_queue_state "$(jq -r .pr.url <<<"$fb")" "" true 2>"$qerr")" \
-  || { reason="$(tail -n 1 "$qerr")"; rm -f "$qerr"; dw_die "PR #${number} のマージキューの状態を読めません: $reason"; }
-cat "$qerr" >&2
-rm -f "$qerr"
+# キューの状態は、結果に効くとき（OPEN で、下書きでなく、フォークでない PR）だけ読む。それ以外は idle になるので、
+# 読めなくても止めない（読まずに queued=false 相当にする）
+mq='{"queued": false}'
+if jq -e --argjson g "$(jq -c '.data.resource' <<<"$res")" '.pr.state == "OPEN" and (.pr.draft | not) and ($g.isCrossRepository | not)' >/dev/null <<<"$fb"; then
+  qerr="$(mktemp)"
+  mq="$(dw_merge_queue_state "$(jq -r .pr.url <<<"$fb")" "" true 2>"$qerr")" \
+    || { reason="$(tail -n 1 "$qerr")"; rm -f "$qerr"; dw_die "PR #${number} のマージキューの状態を読めません: $reason"; }
+  cat "$qerr" >&2
+  rm -f "$qerr"
+fi
 
 # 指摘とコメントは本文を含んで長くなりうるので、引数ではなく標準入力で渡す（引数1つの長さには上限がある）
 # jq の変数（$f など）を bash に展開させないため、シングルクォートで書く

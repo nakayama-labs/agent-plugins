@@ -464,6 +464,20 @@ expect_check() {
   assert_equal "$(jq -c '[.action, .reasons]' <<<"$output")" '["wait",["in_merge_queue"]]'
 }
 
+@test "下書き・閉じた・フォークの PR は、キューの状態を読めなくても idle を返す（キューの状態は読まない。#381）" {
+  setup_fake_gh
+  rm "$FIX/queue.json"
+  pr_view '{isDraft: true}'
+  expect idle '["draft"]'
+  pr_view '{state: "CLOSED"}'
+  expect idle '["not_open"]'
+  pr_view '{}'
+  watch '{isCrossRepository: true}'
+  expect idle '["fork"]'
+  run grep -c '^READ PrQueue ' "$CALLS"
+  assert_output 0
+}
+
 @test "不明な引数は 64 で止まり、--help は使い方を出して 0 で終わる" {
   setup_fake_gh
   run_script pr-watch.sh --bogus
