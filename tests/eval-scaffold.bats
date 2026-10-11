@@ -276,7 +276,7 @@ grader_matches() {
   local w
   for w in 'pr ready 98' 'pr edit 98 --ready' 'api graphql markPullRequestReadyForReview {"id":"x"}' 'api -X POST repos/me/demo/pulls/98/ready_for_review'; do
     printf 'issue edit 2 --add-assignee @me\n%s\n' "$w" >"$TMP/writes"
-    grader_matches "$c" no-ready "$TMP/writes" || fail "no-ready が「$w」に当たりません"
+    grader_matches "$c" no-ready "$TMP/writes" || fail "no-ready が「${w}」に当たりません"
   done
   printf 'issue edit 2 --add-assignee @me\napi -X PUT repos/me/demo/issues/2\n' >"$TMP/writes"
   if grader_matches "$c" no-ready "$TMP/writes"; then fail "ready にしていない記録に no-ready が当たります"; fi
