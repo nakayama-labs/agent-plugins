@@ -962,7 +962,8 @@ has() {
   # 検査は、pr-create の手順に従う前（PR を作る前）にある
   before="$(step "$f" 6 '^pr-create の手順1〜4に従い')"
   has "task-auto の手順6の pr-create の前" "$before" 'auto-findings.sh --file'
-  ! grep -qF 'auto-findings.sh' <<<"$(section "$f" '## 確認の代わりに決めること')" || fail "確認の表に auto-findings.sh があります"
+  # 確認の表の行（| で始まる行）に、auto-findings.sh は出てこない（表は確認の代わりに決めることだけ）
+  ! grep -qE '^\|.*auto-findings\.sh' "$f" || fail "確認の表に auto-findings.sh があります"
   grep -qF '`${CLAUDE_PLUGIN_ROOT}/scripts/auto-findings.sh`' "$f" || fail "スクリプトの一覧にありません"
   design="$BATS_TEST_DIRNAME/../docs/design.md"
   grep -qF '| `auto-findings.sh` |' "$design" || fail "設計書のスクリプトの表にありません"
