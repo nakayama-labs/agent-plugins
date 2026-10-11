@@ -38,6 +38,9 @@ pr="$(jq -n --arg body "$review_body" '{number: 5, url: "https://github.com/me/d
     conclusion: "SUCCESS", detailsUrl: "https://github.com/me/demo/actions/runs/1/job/1"}],
   files: [{path: "README.md", additions: 4, deletions: 0}]}')"
 fake_gh_read 'pr view*' "$pr"
+# pr-watch.sh（gh-pr-check の手順1）が読むマージキューの状態など。フォークでなく、キューに入っていない（上の行が先に当たる）
+fake_gh_read 'api graphql PrWatch*' '{"data": {"resource": {"createdAt": "2026-10-01T00:00:00Z", "isCrossRepository": false,
+  "mergeQueueEntry": null, "reviews": {"nodes": [{"author": {"login": "reviewer"}}]}}}}'
 # resolved でないスレッドは無い（pr-feedback.sh の GraphQL）。プラグインが無いときに Claude が書くクエリにも、同じく空で答える
 threads='{"data": {"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}}}}}'
 fake_gh_read 'api graphql*' "$threads"

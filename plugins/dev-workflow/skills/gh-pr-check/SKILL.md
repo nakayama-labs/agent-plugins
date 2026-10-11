@@ -6,7 +6,7 @@ argument-hint: "[PR番号]"
 
 # PR の確認と、指摘・質問への対応
 
-自分が出した PR の状態を確かめ、付いたコメントがあれば、指摘は直し、質問には答える。PR の状態と指摘の収集は `pr-feedback.sh` が行い、指摘・質問・感想の分類、直し方、返信の文章は AI が担当する。
+自分が出した PR の状態を確かめ、付いたコメントがあれば、指摘は直し、質問には答える。PR の状態と指摘の収集は `pr-feedback.sh` が、手順1で終えるかと伝えることの判断は `pr-watch.sh` が行い、指摘・質問・感想の分類、直し方、返信の文章は AI が担当する。
 
 PR を出した後の任意の寄り道で、マージや task-finish はこのスキルを使わなくても進められる。コメントが無ければ、何も変えずに終える。
 
@@ -16,13 +16,14 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 
 スクリプト（どれも JSON を出力する）:
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/pr-feedback.sh`：PR の状態（CI・レビュー・マージできるか）と、resolved でないスレッド・レビュー本文・PR のコメントを投稿者ごとにまとめ、担当の skill（設定の `pr_check.handlers`）を添えて出力する。返事をしていないもの（スレッド・レビュー本文・PR のコメント）があるかの目印も、`needs_attention`・`counts.unanswered`・各項目の `needs_attention` に出す（true なら対応なしで終えない。false でも、対応が要らないとは限らない）。何も変えない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/pr-feedback.sh`：PR の状態（CI・レビュー・マージできるか）と、resolved でないスレッド・レビュー本文・PR のコメントを投稿者ごとにまとめ、担当の skill（設定の `pr_check.handlers`）を添えて出力する。返事をしていないもの（スレッド・レビュー本文・PR のコメント）があるかの目印も、`needs_attention`・`counts.unanswered`・各項目の `replied`・`needs_attention` に出す。これらの意味は `pr-feedback.sh --help` の「意味」を参照する（ここには書き写さない）。何も変えない（`--help` で使い方）
+- `${CLAUDE_PLUGIN_ROOT}/scripts/pr-watch.sh`：手順1で、一覧へ進むか終えるか（`respond`）と、終えるときに伝えること（`reasons`）を、PR の今の状態から値で出す。`pr-feedback.sh` の判定をそのまま使う。何も変えない（`--help` で値の表）
 
 ## 手順
 
 ### 1. PR の状態を見せる
 
-引数があれば PR の番号として使う（`12` でも `#12` でもよい）。引数が無ければ、依頼の文章から番号を読む。それでも無ければ、今のブランチの PR を使う。`pr-feedback.sh [--pr <番号>]` を実行する。「今のブランチの PR を読めません」で止まったら、どの PR かユーザーに聞く。標準エラーの警告（`warn:`。設定の旧キー `pr_respond` が残っているなど）は、そのままユーザーに伝える（旧キーのままだと、担当の skill に任せられない）。
+引数があれば PR の番号として使う（`12` でも `#12` でもよい）。引数が無ければ、依頼の文章から番号を読む。それでも無ければ、今のブランチの PR を使う。`pr-watch.sh [--pr <番号>]` と `pr-feedback.sh [--pr <番号>]` を実行する。「今のブランチの PR を読めません」で止まったら、どの PR かユーザーに聞く。標準エラーの警告（`warn:`。設定の旧キー `pr_respond` が残っているなど）は、そのままユーザーに伝える（旧キーのままだと、担当の skill に任せられない）。
 
 最初に、PR の状態を短く見せる（PR の URL を添える）。
 
@@ -31,12 +32,18 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 - レビュー：`pr.review_decision`（`APPROVED`・`CHANGES_REQUESTED`・`REVIEW_REQUIRED`、無ければ null）
 - マージできるか：`pr.mergeable`・`pr.merge_state`（`CLEAN` ならマージできる。`BLOCKED` はチェックの失敗・承認待ち・未解決のスレッドなど、`BEHIND` は PR のマージ先（`pr.base`）の取り込み待ち、`DIRTY` はコンフリクト。`BEHIND`・`DIRTY` なら branch-update スキルを案内する）
 
-`needs_attention` が true なら、返事をしていないものがあるので、「対応はありません」で終えない（true の項目は手順3で必ず一覧に入れる）。`needs_attention` が false でも、対応が要らないとは限らない。PR のコメント・レビュー本文の `replied` は、その後に PR の作者が PR のコメントを書いたかを時刻だけで決めた目安で、誰への返事かは見ていない（対応済みにするかは、手順3で `own_comments` と照らして決める。スレッドの `replied` は、スレッドの持ち主の最後のコメントの後に作者が書いたかで決まり、手順3で対応済みにする）。
+終えるかどうかと、終えるときに伝えることは、`pr-watch.sh` の出力の値で決める（`feedback` や `checks` を自分で読み比べて決めない。値の組み合わせは `tests/pr-watch.bats` の表で確かめている）。
+
+- `respond` が true：手順2へ進む（CI の失敗、返事をしていないもの、返事待ちの項目のどれかがある）。`reasons` に `conflicting`・`behind` があれば、branch-update スキルも案内する
+- `respond` が false：何も変えずに終える。`reasons` の値ごとに、次を伝える（`nothing_to_do` だけなら「対応するコメントはありません」。ほかの値があれば、それも必ず添える。「対応するコメントはありません」だけだと、問題が無いと読めるため）
+  - `not_open`：PR が OPEN でない（マージ済み・閉じた）。状態だけを伝える
+  - `ci_pending`：CI が実行中
+  - `merge_blocked`：マージはまだできない（`pr.merge_state` の値を添える）
+  - `awaiting_review:<投稿者>`・`mergeable_unknown`・`in_merge_queue`：待っているもの（レビュー・GitHub の計算・マージキュー）
+  - `draft`・`fork`：ドラフト・フォークからの PR
 
 - スレッドの件数（`counts.threads`）だけを見て「未解決なし」「対応はありません」と言わない。diff の外の指摘はレビュー本文に、質問は PR のコメントにあり、スレッドが無いので `counts.threads` に現れない
 - 出力を `jq` で絞って読むときも、`threads` だけを取り出さず、`reviews`・`comments`・`needs_attention`・`counts.unanswered` を落とさない
-
-`pr.state` が `OPEN` でなければ（マージ済み・閉じた）、状態だけを伝えて終える。`feedback` が空で、`checks.state` が `failure` でもなければ、何も変えずに終える（`needs_attention` が true なら、`feedback` は空でない）。このとき、コメントが無いことに加えて、CI が `pending`（実行中）か、`pr.merge_state` が `CLEAN` でない（`BLOCKED` など）なら、「対応するコメントはありませんが、CI が実行中です」「マージはまだできません（`BLOCKED`）」のように、その状態も伝える（「対応するコメントはありません」だけだと、問題が無いと読めるため）。
 
 ### 2. 担当を分ける
 
@@ -55,10 +62,10 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 - **質問**：答えるだけでよい内容。コードは変えない（答えるうちに直すべき点が見つかれば、指摘として挙げ直す）
 - **感想・承認**：お礼・同意・承認（`APPROVED` で本文が無いものを含む）。何もしない
 
-`needs_attention` が true の項目（スレッド・レビュー本文・PR のコメント）は、必ず一覧に入れる。次のものは、対応済みとして一覧の下に分けて見せ、選ばせない。
+`needs_attention` が true の項目（スレッド・レビュー本文・PR のコメント）は、必ず一覧に入れる。次のものは、対応済みとして一覧の下に分けて見せ、選ばせない（`replied` の意味は `pr-feedback.sh --help` を参照）。
 
-- スレッドの `replied` が true（スレッドの持ち主の最後のコメントの後に PR の作者が書いていて、持ち主の返事待ち）
-- PR のコメント・レビュー本文で、その後の `own_comments` に、それへの返信と分かるもの（引用・リンク・内容）がある。`replied` が true（その後に PR の作者の PR のコメントがある）でも、それだけで対応済みにしない。PR のコメント・レビュー本文の `replied` は時刻だけで決めた目安で、後の作者のコメントが別の相手への返事なら、対応済みにしない
+- スレッドの `replied` が true
+- PR のコメント・レビュー本文で、その後の `own_comments` に、それへの返信と分かるもの（引用・リンク・内容）がある。`replied` が true でも、それだけで対応済みにしない。`replied` は目安なので、後の作者のコメントが別の相手への返事なら、対応済みにしない
 
 `outdated` が true のスレッドは、指摘のあった行がその後の push で変わっている。今のコードで直っているかを確かめ、直っていれば、直したコミットを添えて返信する候補にする。
 
