@@ -84,7 +84,7 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_success
   assert_equal "$(out_of '.pr | [.number, .state, .author, .head, .head_sha, .merge_state, .review_decision]')" '[5,"OPEN","me","feat/5-x","abc","CLEAN",null]'
   assert_equal "$(out_of '[.feedback, .own_comments, .counts, .needs_attention, .checks.state]')" \
-    '[[],[],{"threads":0,"reviews":0,"comments":0,"unanswered":{"threads":0,"reviews":0,"comments":0}},false,"none"]'
+    '[[],[],{"threads":0,"reviews":0,"comments":0,"unanswered":{"threads":0,"reviews":0,"comments":0},"awaiting":0},false,"none"]'
   # 番号を指定しなければ、今のブランチの PR を読む
   assert_equal "$(args PrView)" "--json number,url,title,state,isDraft,author,headRefName,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,reviews,comments,statusCheckRollup"
   # スレッドは今のリポジトリで読む
@@ -144,7 +144,7 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_equal "$(out_of '[.feedback[].author]')" '["alice","bob"]'
   assert_equal "$(out_of '[.feedback[] | {author, r: [.reviews[].id], c: [.comments[].id]}]')" \
     '[{"author":"alice","r":["R1"],"c":[]},{"author":"bob","r":["R3"],"c":["C1"]}]'
-  assert_equal "$(out_of '.counts | del(.unanswered)')" '{"threads":0,"reviews":2,"comments":1}'
+  assert_equal "$(out_of '.counts | del(.unanswered, .awaiting)')" '{"threads":0,"reviews":2,"comments":1}'
   # PR の作者のコメントは、返信済みかの判断に使えるよう own_comments に出す
   assert_equal "$(out_of '[.own_comments[] | [.id, .body]]')" '[["C2","返信です"]]'
 }
@@ -178,7 +178,8 @@ out_of() { jq -c "$1" <<<"$output"; }
       {id: "R1", author: {login: "reviewer"}, state: "COMMENTED", body: "diff の外の指摘", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}},
       {id: "R2", author: {login: "reviewer"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:00:02Z", commit: {oid: "abc"}},
       {id: "R3", author: {login: "bob"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:00:10Z", commit: {oid: "abc"}},
-      {id: "R4", author: {login: "me"}, state: "COMMENTED", body: "自分のメモ", submittedAt: "2026-10-01T00:00:09Z", commit: {oid: "abc"}}],
+      {id: "R4", author: {login: "me"}, state: "COMMENTED", body: "自分のメモ", submittedAt: "2026-10-01T00:00:09Z", commit: {oid: "abc"}},
+      {id: "R5", author: {login: "reviewer"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:00:11Z", commit: {oid: "abc"}}],
     comments: [
       {id: "C1", author: {login: "alice"}, body: "質問です", createdAt: "2026-10-01T00:00:03Z", url: "u1"},
       {id: "C2", author: {login: "me"}, body: "@reviewer @alice 直しました", createdAt: "2026-10-01T00:00:05Z", url: "u2"},
@@ -190,10 +191,10 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_success
   assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":0,"comments":0},false]'
   assert_equal "$(out_of '[.feedback[] | .reviews[], .comments[] | [.id, .replied, .needs_attention]]')" \
-    '[["C1",true,false],["R3",false,false],["R1",true,false],["R2",false,false]]'
+    '[["C1",true,false],["R3",false,false],["R1",true,false],["R2",false,false],["R5",false,false]]'
 }
 
-@test "変更の要求は、本文が無くても、返事をしていなければ needs_attention が true。返事の後に付いたレビュー・コメントは、新しく返事をしていないものになる" {
+@test "変更の要求は、本文が無くても、後に同じ人の別の判定が無ければ needs_attention が true。返事の後に付いたレビュー・コメントは、新しく返事をしていないものになる" {
   setup_fake_gh
   pr_view '{
     reviews: [
@@ -203,7 +204,7 @@ out_of() { jq -c "$1" <<<"$output"; }
       {id: "C2", author: {login: "alice"}, body: "まだ直っていません", createdAt: "2026-10-01T00:00:07Z", url: "u2"}]}'
   run_script pr-feedback.sh
   assert_success
-  assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":0,"comments":1},true]'
+  assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":1,"comments":1},true]'
 }
 
 @test "本文の無い変更の要求は、作者が別の相手に PR のコメントを書いても返事済みにならず、変更の要求のあいだ needs_attention が true（#357）" {
@@ -216,14 +217,47 @@ out_of() { jq -c "$1" <<<"$output"; }
   assert_success
   assert_equal "$(out_of '[.counts.unanswered, .needs_attention, (.feedback[0].reviews[0] | [.replied, .needs_attention])]')" \
     '[{"threads":0,"reviews":1,"comments":0},true,[false,true]]'
-  # 変更の要求が解けた（承認された）後の古い変更の要求は、数えない
+  # 同じ人が後で承認した（変更の要求が解けた）なら、古い変更の要求は数えない
   pr_view '{
     reviewDecision: "APPROVED",
-    reviews: [{id: "R1", author: {login: "reviewer"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}}],
+    reviews: [
+      {id: "R1", author: {login: "reviewer"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}},
+      {id: "R2", author: {login: "reviewer"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:00:03Z", commit: {oid: "abc"}}],
     comments: [{id: "C1", author: {login: "me"}, body: "直しました", createdAt: "2026-10-01T00:00:05Z", url: "u1"}]}'
   run_script pr-feedback.sh
   assert_success
-  assert_equal "$(out_of '[.needs_attention, (.feedback[0].reviews[0] | [.replied, .needs_attention])]')" '[false,[false,false]]'
+  assert_equal "$(out_of '[.needs_attention, (.feedback[0].reviews[0] | [.id, .replied, .needs_attention])]')" '[false,["R1",false,false]]'
+}
+
+@test "本文の無い変更の要求は、reviewDecision が null（必須レビューのルールが無いリポジトリ）でも、その人の最新の判定なら needs_attention が true（後に別の人が承認しても変わらない）" {
+  setup_fake_gh
+  pr_view '{
+    reviewDecision: null,
+    reviews: [
+      {id: "R1", author: {login: "reviewer"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}},
+      {id: "R2", author: {login: "bob"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:00:02Z", commit: {oid: "abc"}}]}'
+  run_script pr-feedback.sh
+  assert_success
+  assert_equal "$(out_of '[.counts.unanswered, .needs_attention]')" '[{"threads":0,"reviews":1,"comments":0},true]'
+}
+
+@test "counts.awaiting は、replied が true の項目（スレッド・本文のあるレビュー・PR のコメント）の件数。本文の無い承認・変更の要求は数えない" {
+  setup_fake_gh
+  pr_view '{
+    reviews: [
+      {id: "R1", author: {login: "alice"}, state: "COMMENTED", body: "指摘", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}},
+      {id: "R2", author: {login: "bob"}, state: "APPROVED", body: "", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}},
+      {id: "R3", author: {login: "carol"}, state: "CHANGES_REQUESTED", body: "", submittedAt: "2026-10-01T00:00:01Z", commit: {oid: "abc"}}],
+    comments: [
+      {id: "C1", author: {login: "alice"}, body: "質問", createdAt: "2026-10-01T00:00:02Z", url: "u1"},
+      {id: "C2", author: {login: "me"}, body: "答えました", createdAt: "2026-10-01T00:00:05Z", url: "u2"},
+      {id: "C3", author: {login: "bob"}, body: "後の質問", createdAt: "2026-10-01T00:00:07Z", url: "u3"}]}'
+  thread false '[["alice", "指摘"], ["me", "直しました"]]'
+  write_threads
+  run_script pr-feedback.sh
+  assert_success
+  # 返事待ち：R1・C1・スレッド。返事をしていない：R3（本文の無い変更の要求）・C3
+  assert_equal "$(out_of '[.counts.awaiting, .counts.unanswered]')" '[3,{"threads":0,"reviews":1,"comments":1}]'
 }
 
 @test "返事の後に編集されたレビュー本文・PR のコメントは、返事済みにならず、needs_attention が true（#357）" {
@@ -455,6 +489,6 @@ out_of() { jq -c "$1" <<<"$output"; }
   mv "$TMP/v.json" "$FIX/pr-view.json"
   run_script pr-feedback.sh
   assert_success
-  assert_equal "$(out_of '.counts | del(.unanswered)')" '{"threads":1,"reviews":1,"comments":1}'
+  assert_equal "$(out_of '.counts | del(.unanswered, .awaiting)')" '{"threads":1,"reviews":1,"comments":1}'
   assert_equal "$(out_of '.feedback[0].threads[0].comments[0].body | length')" 60000
 }

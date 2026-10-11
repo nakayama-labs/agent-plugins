@@ -34,8 +34,8 @@
 #   6. idle  nothing_to_do  上のどれでもない（CI が全部通るか無く、対応する指摘も無い）
 #
 #   5 と 6 の理由には、次のものを続けて足す（ユーザーに伝えることを表す。action は変えない）:
-#            awaiting_replies      返事待ちの項目がある（PR の作者が返事をして、相手の返事を待っている。スレッド、または本文のある
-#                                  か変更の要求のレビュー・PR のコメントで replied が true のもの。意味は pr-feedback.sh --help）
+#            awaiting_replies      返事待ちの項目がある（PR の作者が返事をして、相手の返事を待っている。pr-feedback.sh の
+#                                  counts.awaiting。意味は pr-feedback.sh --help）
 #            merge_blocked         merge_state が CLEAN でない（BLOCKED など。コンフリクトと遅れは conflict で扱う）
 #
 # 決まり:
@@ -110,8 +110,8 @@ printf '%s\n' "$fb" "$res" | jq -s --argjson now "$now" --argjson wait_min "$rev
   | ([$g.reviews.nodes[].author.login // empty | norm] + [$f.feedback[].author | norm]) as $arrived
   | (($now - ($g.createdAt | fromdateiso8601)) < ($wait_min * 60)) as $in_wait_window
   | (if $in_wait_window then [$f.handlers | keys[] | select(norm as $k | $arrived | index($k) | not)] else [] end) as $waiting_for
-  # 返事待ちの項目（pr-feedback.sh の replied が true のもの。本文の無い承認は数えない）
-  | ([$f.feedback[] | (.threads[], .comments[], (.reviews[] | select(.body != "" or .state == "CHANGES_REQUESTED"))) | select(.replied)] | length) as $n_awaiting
+  # 返事待ちの項目の数も pr-feedback.sh が決める（counts.awaiting。意味は pr-feedback.sh --help）
+  | ($f.counts.awaiting) as $n_awaiting
   | ($p.merge_state) as $ms
   | ([if $n_awaiting > 0 then "awaiting_replies" else empty end, if $ms != "CLEAN" and $ms != "UNKNOWN" then "merge_blocked" else empty end]) as $notes
   | (if $p.state != "OPEN" then {action: "idle", reasons: ["not_open"]}

@@ -34,7 +34,8 @@ PR を出した後の任意の寄り道で、マージや task-finish はこの�
 
 終えるかどうかと、終えるときに伝えることは、`pr-watch.sh` の出力の値で決める（`feedback` や `checks` を自分で読み比べて決めない。値の組み合わせは `tests/pr-watch.bats` の表で確かめている）。
 
-- `respond` が true：手順2へ進む（CI の失敗、返事をしていないもの、返事待ちの項目のどれかがある）。`reasons` に `conflicting`・`behind` があれば、branch-update スキルも案内する
+- `reasons` に `conflicting`・`behind` があれば、`respond` の値によらず、branch-update スキルを案内する（`respond` が false で終えるときも、true で手順2へ進むときも）
+- `respond` が true：手順2へ進む（CI の失敗、返事をしていないもの、返事待ちの項目のどれかがある）
 - `respond` が false：何も変えずに終える。`reasons` の値ごとに、次を伝える（`nothing_to_do` だけなら「対応するコメントはありません」。ほかの値があれば、それも必ず添える。「対応するコメントはありません」だけだと、問題が無いと読めるため）
   - `not_open`：PR が OPEN でない（マージ済み・閉じた）。状態だけを伝える
   - `ci_pending`：CI が実行中

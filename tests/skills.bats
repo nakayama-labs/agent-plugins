@@ -362,6 +362,9 @@ has() {
     grep -q "\`$v" <<<"$s1" || fail "gh-pr-check の手順1に、reasons の値 ${v} が書かれていません"
     grep -q "$v" "$SKILL_SCRIPTS/pr-watch.sh" || fail "pr-watch.sh に、手順1が使う reasons の値 ${v} がありません"
   done
+  # branch-update の案内は respond の値によらず、reasons の conflicting・behind で出す
+  grep -q '^- `reasons` に `conflicting`・`behind` があれば、`respond` の値によらず.*branch-update' <<<"$s1" \
+    || fail "gh-pr-check の手順1に、respond によらず conflicting・behind で branch-update を案内することが書かれていません"
   # 判断を文章で書き直さない（値ごとにすることだけを書く）。feedback が空か・checks.state・merge_state の組み合わせで決める書き方は残さない
   if grep -q '`feedback` が空で' "$f"; then fail "gh-pr-check に、feedback が空かで終える判断が文章で残っています（pr-watch.sh の respond で決める）"; fi
   grep -q '選べる指摘・質問が1つも無ければ.*聞かずに' "$f" \

@@ -18,10 +18,10 @@
 #               replied・needs_attention
 #     comments  PR のコメント（スレッドの外）。id・body・created_at・url・replied・needs_attention
 #   own_comments  PR の作者の PR のコメント（id・body・created_at・url）。どのコメントに返信済みかの判断に使う
-#   counts     threads・reviews・comments の合計と、unanswered（下の「意味」）
+#   counts     threads・reviews・comments の合計と、unanswered・awaiting（下の「意味」）
 #   needs_attention  返事をしていないものが1つでもあるか（下の「意味」）
 #
-# 意味（needs_attention・replied・counts.unanswered の正本。SKILL.md・設計書・README は、ここを参照するだけにして、意味を書き写さない）:
+# 意味（needs_attention・replied・counts.unanswered・counts.awaiting の正本。SKILL.md・設計書・README は、ここを参照するだけにして、意味を書き写さない）:
 #   replied          返事が済んでいるか。
 #                    - スレッド：スレッドの持ち主（PR の作者以外で、決まりの規則で選んだ書き手）の最後のコメントの後に、PR の作者が書いている
 #                      （持ち主の返事待ち）
@@ -31,8 +31,9 @@
 #                      返事済みにしない
 #   needs_attention  項目ごとの「返事をしていない」目印。スレッドとコメントは replied でないこと。レビューは、replied でなく、
 #                    本文があるか変更の要求であること（本文の無い承認は数えない）。本文の無い変更の要求は、返事で済ませられないので、
-#                    pr.review_decision が CHANGES_REQUESTED のあいだ true になる
+#                    同じ人の後の APPROVED・CHANGES_REQUESTED・DISMISSED のレビューが無いあいだ（今も有効なあいだ）true になる
 #   counts.unanswered  needs_attention が true の項目の件数（threads・reviews・comments ごと）
+#   counts.awaiting  返事待ちの項目の件数。replied が true で、本文のあるレビュー・変更の要求・スレッド・コメントのもの（本文の無い承認は数えない）
 #   needs_attention（トップレベル）  counts.unanswered のどれかが 1 以上か。true なら対応なしで終えない目印。false でも対応が要らない
 #                    とは限らない（replied は目安で、返事待ちの項目もある）。CI の失敗は含めない（checks を見る）
 #
@@ -168,15 +169,20 @@ printf '%s\n' "$view" "$threads" "$edits" | jq -s --argjson handlers "$handlers"
   # PR の作者の PR のコメントの、最後の時刻（無ければ ""）。レビュー本文・PR のコメントは、この時刻以前に作られ、
   # この時刻より後に編集されていなければ、返事済みとする。時刻が null のものは返事済みにしない
   | ([($v.comments // [])[] | select((login | norm) == $me) | .createdAt] | max // "") as $last_own
-  | [($v.reviews // [])[]
+  | ($v.reviews // []) as $all_reviews
+  | [$all_reviews | to_entries[] | .key as $i | .value
       | select((login | norm) != $me)
       | select((.body // "") != "" or (.state | IN("APPROVED", "CHANGES_REQUESTED")))
       | (.body // "") as $body
       | ($body == "" and .state == "CHANGES_REQUESTED") as $bodyless_cr
+      # 本文の無い変更の要求が今も有効か：同じ人の、後の APPROVED・CHANGES_REQUESTED・DISMISSED のレビューが無い
+      # （reviewDecision は、必須レビューのルールが無いリポジトリでは null なので使わない）
+      | (login | norm) as $who
+      | ([$all_reviews[$i + 1:][] | select((login | norm) == $who and (.state | IN("APPROVED", "CHANGES_REQUESTED", "DISMISSED")))] | length == 0) as $latest
       | (($bodyless_cr | not) and $last_own != "" and .submittedAt != null and .submittedAt <= $last_own and (edited_after($edits; $last_own) | not)) as $replied
       | {author: login, item: {id, state, body: (.body // ""), submitted_at: .submittedAt, commit: (.commit.oid // null),
           replied: $replied,
-          needs_attention: (if $bodyless_cr then ($v.reviewDecision == "CHANGES_REQUESTED")
+          needs_attention: (if $bodyless_cr then $latest
                             else (($replied | not) and $body != "") end)}}] as $r
   | [($v.comments // [])[]
       | select((login | norm) != $me)
@@ -185,6 +191,8 @@ printf '%s\n' "$view" "$threads" "$edits" | jq -s --argjson handlers "$handlers"
   | {threads: ([$t[] | select(.item.needs_attention)] | length),
      reviews: ([$r[] | select(.item.needs_attention)] | length),
      comments: ([$c[] | select(.item.needs_attention)] | length)} as $unanswered
+  # 返事待ち。replied が true で、本文のあるレビュー・変更の要求・スレッド・コメントの数（本文の無い承認は数えない）
+  | ([$t[], $c[] | select(.item.replied)] + [$r[] | select(.item.replied and (.item.body != "" or .item.state == "CHANGES_REQUESTED"))] | length) as $awaiting
 
   | {
       pr: {number: $v.number, url: $v.url, title: $v.title, state: $v.state, draft: $v.isDraft,
@@ -202,6 +210,6 @@ printf '%s\n' "$view" "$threads" "$edits" | jq -s --argjson handlers "$handlers"
         reviews: [$r[] | select(.author | norm == ($a | norm)) | .item],
         comments: [$c[] | select(.author | norm == ($a | norm)) | .item]})),
       own_comments: [($v.comments // [])[] | select((login | norm) == $me) | {id, body, created_at: .createdAt, url}],
-      counts: {threads: ($t | length), reviews: ($r | length), comments: ($c | length), unanswered: $unanswered},
+      counts: {threads: ($t | length), reviews: ($r | length), comments: ($c | length), unanswered: $unanswered, awaiting: $awaiting},
       needs_attention: ($unanswered | add > 0)
     }'
