@@ -66,4 +66,6 @@ fake_gh_read 'api graphql TodoItems' "$(jq -nc --arg b "$body" '{data: {reposito
     status: {name: "In Progress"}, sp: null}]}}}}}')"
 # 親の Issue は無い（着手で親の列も移すかを決めるために読む）
 fake_gh_read 'api repos/me/demo/issues/2/parent*' 'gh: Not Found (HTTP 404)' 1
+# 親が無いことの確かめ（/parent が 404 のとき、Issue の応答の parent_issue_url で親が読めないだけでないかを見る）
+fake_gh_read 'api repos/me/demo/issues/2' '{"number": 2, "parent_issue_url": null}'
 fake_gh_defaults

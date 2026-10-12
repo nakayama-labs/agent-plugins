@@ -13,6 +13,7 @@
 #   exceeds_max_depth  候補の下に紐付けた一番深い Issue が、設定の sub_issues.max_depth（既定 3）の層を超える
 #                      深さは issue-create.sh の検査と同じく、候補から上へ issues/{番号}/parent をたどって数える（一番上の Issue が1層目。
 #                      別のリポジトリの親もたどる）。上限を超えると分かった時点でたどるのを止める（規則は lib/common.sh の dw_sub_issue_depth）
+#                      親が、トークンで読めないリポジトリにあるときは（/parent が 404 でも Issue の応答に parent_issue_url がある）、親なしと数えず、エラーで止まる（終了コード 1）
 #
 # 出力: {issue, has_sub_issues, parent（一番近い親の {number, repo} か null）,
 #        depth（紐付けた一番深い Issue の層。上限を超えると分かってたどるのを止めたときは null）, max_depth,

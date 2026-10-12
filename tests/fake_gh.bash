@@ -138,6 +138,8 @@ case "$1 $2" in
   "api repos/"*)
     echo "api-get $2" >>"$CALLS"
     fail api-get
+    # $FIX/issue-N.json があれば、Issue N の応答として返す（親が読めないかを parent_issue_url で確かめるテスト用）
+    if [ -f "$FIX/issue-${2##*/}.json" ]; then cat "$FIX/issue-${2##*/}.json"; exit 0; fi
     [ -f "$FIX/remote-ref" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     echo '{}'
     ;;

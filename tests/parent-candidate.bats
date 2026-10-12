@@ -286,3 +286,24 @@ max_depth() { echo "{\"sub_issues\": {\"max_depth\": $1}}" >.claude/dev-workflow
   assert_success
   assert_equal "$(jq .issue <<<"$output")" 12
 }
+
+@test "候補やその上の親が読めない（/parent が 404 でも parent_issue_url がある）ときは、親なしとは数えずに止まる（#347）" {
+  setup_fake_gh
+  # 候補（12）の親が読めない
+  issue_json me/demo 12 | jq -c '. + {parent_issue_url: "https://api.github.com/repos/other/private/issues/3"}' >"$FIX/issue-12.json"
+  run_script parent-candidate.sh --issue 12 --levels 1
+  assert_failure
+  assert_output --partial "#12 の親（https://api.github.com/repos/other/private/issues/3）を読めません"
+  # 候補の親（5）は読めるが、その上が読めない
+  issue_json me/demo 12 >"$FIX/issue-12.json"
+  issue_json me/demo 5 | jq -c '. + {parent_issue_url: "https://api.github.com/repos/other/private/issues/3"}' >"$FIX/parent-12.json"
+  run_script parent-candidate.sh --issue 12 --levels 1
+  assert_failure
+  assert_output --partial "#5 の親（https://api.github.com/repos/other/private/issues/3）を読めません"
+  # parent_issue_url が null なら、親が無い
+  issue_json me/demo 12 | jq -c '. + {parent_issue_url: null}' >"$FIX/issue-12.json"
+  rm "$FIX/parent-12.json"
+  run_script parent-candidate.sh --issue 12 --levels 1
+  assert_success
+  assert_equal "$(jq -c '[.has_parent, .action]' <<<"$output")" '[false,"use_as_parent"]'
+}

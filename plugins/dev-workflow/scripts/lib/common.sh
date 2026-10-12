@@ -714,16 +714,32 @@ dw_same_repo() { [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$(print
 # shellcheck disable=SC2034 # source した側で使う
 DW_JQ_LOGIN_NORM='def norm: ascii_downcase | sub("\\[bot\\]$"; "");'
 
+# issues/{番号}/parent が「無い」（404）と返ったとき、本当に親が無いのかを、Issue の応答の parent_issue_url で確かめる。
+# 親が、トークンで読めないリポジトリ（他の組織の非公開リポジトリなど）にあると、/parent は 404 を返し、dw_gh_find は null（親なし）にしてしまう。
+# 一方、Issue の応答の parent_issue_url は、親があれば（読めなくても）その url を持つ。親があるのに読めないなら、親なしと数えず、止まる。
+# 使い方: dw_die_if_parent_unreadable <Issue の JSON>   （parent_issue_url が無い応答、null の応答は親なしとみなして何もしない）
+dw_die_if_parent_unreadable() {
+  local url
+  url="$(jq -r '.parent_issue_url // empty' <<<"$1")" || return 1
+  [ -z "$url" ] || dw_die "#$(jq -r '.number // "?"' <<<"$1") の親（${url}）を読めません（トークンで読めないリポジトリにあるかもしれません）。親があるので、親なしとは数えません"
+}
+
 # Issue の親を、近い順に（親、親の親、…）たどって、JSON の配列を出力する。要素は {number, title, state, state_reason}。
 # 親が無ければ []。別のリポジトリの親に当たったら、そこで打ち切る（その親も、さらに上の親も含めない。設計書 §4：親子は同じリポジトリだけ扱う）。
 # GitHub の親子は8層までなので、念のため層の数で打ち切る。
 # 使い方: dw_issue_parents <OWNER/NAME> <Issue の番号>
 dw_issue_parents() {
-  local repo="$1" cur="$2" out='[]' p i=0
+  local repo="$1" cur="$2" out='[]' p node='' i=0
   while [ "$i" -lt 8 ]; do
     # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
     p="$(dw_gh_find gh api "repos/$repo/issues/$cur/parent")" || return 1
-    [ "$p" != null ] || break
+    if [ "$p" = null ]; then
+      # 親が読めないだけかもしれないので、Issue の応答（最初の Issue は読んでいないので、ここで読む）の parent_issue_url で確かめる
+      [ -n "$node" ] || node="$(dw_rest_issue "$repo" "$cur")" || return 1
+      [ "$node" = null ] || dw_die_if_parent_unreadable "$node" || return 1
+      break
+    fi
+    node="$p"
     dw_same_repo "$(jq -r '.repository_url | sub("^.*?/repos/"; "")' <<<"$p")" "$repo" || break
     # 親の JSON は本文を含んで長くなりうるので、引数ではなく標準入力で jq に渡す（引数1つの長さには上限がある）
     out="$(printf '%s\n' "$out" "$p" | jq -sc '.[0] + [.[1] | {number, title, state, state_reason: (.state_reason // null)}]')" || return 1
@@ -1242,14 +1258,19 @@ dw_rest_issue() {
 # first の repo は repository_url から作り、無ければ url から作る。
 # 使い方: dw_sub_issue_depth <Issue の JSON> <下の層の数> <max_depth> [<最低の回数>]
 dw_sub_issue_depth() {
-  local node="$1" levels="$2" max="$3" limit count=0 first=null out path
+  local node="$1" levels="$2" max="$3" limit count=0 first=null out path parent
   limit=$((max - levels))
   [ "$limit" -ge "${4:-0}" ] || limit="${4:-0}"
   # 関数は if の中から呼ばれると set -e が効かないので、失敗は明示して返す
   path="$(jq -r '.url | sub("^.*?/repos/"; "repos/")' <<<"$node")" || return 1
   while [ "$count" -lt "$limit" ]; do
-    node="$(dw_gh_find gh api "$path/parent")" || return 1
-    [ "$node" != null ] || break
+    parent="$(dw_gh_find gh api "$path/parent")" || return 1
+    if [ "$parent" = null ]; then
+      # 親が読めないだけかもしれない（dw_die_if_parent_unreadable）。親なしと数えず、止まる
+      dw_die_if_parent_unreadable "$node" || return 1
+      break
+    fi
+    node="$parent"
     count=$((count + 1))
     # 1つの応答から、次にたどるパス（1行目）と、親の {number, repo}（2行目）を、jq を1回だけ起動して作る
     out="$(jq -r '(.url | sub("^.*?/repos/"; "repos/")),

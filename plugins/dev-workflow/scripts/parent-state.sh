@@ -16,6 +16,7 @@
 #   suggest: 親が開いていて all_closed のとき、閉じ方の案（completed か not_planned）。それ以外は null
 #             子がすべて取りやめ（not_planned・duplicate）なら not_planned、それ以外は completed
 # 別のリポジトリの親は含めない（そこで打ち切る。設計書 §4）。親が無ければ parents は [] 。
+# 親が、トークンで読めないリポジトリにあるときは（/parent が 404 でも Issue の応答に parent_issue_url がある）、親なしと数えず、エラーで止まる（終了コード 1）。
 set -euo pipefail
 
 # shellcheck source=lib/common.sh
