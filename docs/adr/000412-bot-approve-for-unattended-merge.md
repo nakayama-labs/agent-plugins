@@ -42,7 +42,7 @@ issue: 412
   * `github-actions[bot]` の approve。`claude-review.yml` が、Claude のレビューが指摘なしのときに、レビューした head を指して付ける。指摘があるときは付けない。
 * 数える approve は、そのレビュアーの最新のレビューの状態が approved で、そのレビューの対象のコミットが PR の最新の head であるもの。push の後は数えない（レビューし直す）。
 * 最新の状態が changes requested のレビュアーが1人でもいれば（人も bot も）、マージしない。
-* `github-actions[bot]` の approve は、`claude-review.yml` だけが付け、PR の作成者が bot のとき（task-auto の PR など。無人のマージの対象と同じ）に限る。人が作った PR は、本文や差分に仕込んだ指示で Claude に「指摘なし」と書かせて自分の PR を approve させられるおそれがあるので、approve しない。そのワークフローは、review.md の中身が「指摘はありません」の1行だけのときに限って approve する。ほかの文章（指摘の一覧など）のときは付けない。
+* `github-actions[bot]` の approve は、`claude-review.yml` だけが付け、PR の作成者が bot のときに限る（task-auto の PR に限らず、Dependabot など他の bot の PR にも付く。無人のマージの対象は、000411 のとおり、マージの判定が task-auto の bot が作った PR かを別に確かめるので、task-auto の PR だけ）。人が作った PR は、本文や差分に仕込んだ指示で Claude に「指摘なし」と書かせて自分の PR を approve させられるおそれがあるので、approve しない。そのワークフローは、review.md の中身が「指摘はありません」の1行だけのときに限って approve する。ほかの文章（指摘の一覧など）のときは付けない。
 * 人の approve を数えるときの決まり（write 以上・bot の approve は人の approve に数えない）は、000411 のとおり。`require_human_approval` が true のときは、bot の approve に加えて人の approve も要る。
 * `claude-review.yml` の approve は、GitHub Actions の `GITHUB_TOKEN` で付ける（新しい GitHub App は作らない）。task-auto の PR は task-auto の GitHub App が作るので、作成者と approve の主が別になり、GitHub の「自分の PR は approve できない」の制約に当たらない。ただし、リポジトリの設定「Allow GitHub Actions to create and approve pull requests」が有効でないと、approve は失敗する。
 

@@ -261,6 +261,15 @@ SH
   [ ! -s "$CALLS" ]
 }
 
+@test "approve: PR の user が null（削除済みのユーザー）のときは付けない" {
+  setup_approve
+  echo '{"head":{"sha":"abc123"},"user":null}' >"$FIX/pull.json"
+  printf '指摘はありません\n' >"$REVIEW_DIR/review.md"
+  run "${TEST_BASH:-bash}" "$TMP/approve.sh"
+  [ "$status" -eq 0 ]
+  [ ! -s "$CALLS" ]
+}
+
 @test "approve: PR のコードを実行しない（チェックアウトしたスクリプトを呼ばず、権限は pull-requests: write）" {
   script="$(extract_approve_script)"
   [[ "$script" != *'.github/scripts'* ]] || return 1
