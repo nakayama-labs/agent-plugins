@@ -6,6 +6,10 @@
 language: ja-JP
 
 reviews:
+  # 対応が要る指摘に Request changes を付け、最新のコミットのレビュー済み・必須のスレッドが resolved・
+  # Pre-Merge Checks が通る・head が変わっていないときに approve する。無人のマージの承認に数える（ADR 000412）。
+  # Pro プランの機能。試用期間後に使えるかは #160 と合わせて確かめる（使えなければ、この行を消す）
+  request_changes_workflow: true
   auto_review:
     enabled: true
     # CodeRabbit の試用期間中は、全機能を使うため、push のたびにも増分でレビューする（暫定。#159）。

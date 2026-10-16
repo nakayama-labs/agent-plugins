@@ -175,3 +175,88 @@ run_patrol() {
   run grep -rnE "contains\(.*['\"]rate limited by coderabbit" "$WF"
   [ "$status" -eq 1 ]
 }
+
+# --- 指摘がなければ approve する手順（ADR 000412）を、偽の gh で実際に動かして確かめる ---
+
+# 「指摘がなければ approve する」の run のスクリプトを取り出す（インデント10字を除く）。取り出せなければ落とす
+extract_approve_script() {
+  local out
+  out="$(awk '
+    !on && /^      - name: 指摘がなければ approve する$/ { f = 1 }
+    f && !on && /^        run: \|$/ { on = 1; next }
+    on { if ($0 != "" && substr($0, 1, 10) != "          ") exit; print substr($0, 11) }
+  ' "$WF")"
+  [ -n "$out" ] || { echo "approve の run を取り出せません" >&2; return 1; }
+  printf '%s\n' "$out"
+}
+
+# 偽の gh：head の sha を $FIX/head で答え、reviews への書き込み（-f を含む呼び出し）を $CALLS に記録する
+setup_approve() {
+  FIX="$TMP/fix"; CALLS="$TMP/calls"
+  export FIX CALLS GITHUB_REPOSITORY=me/demo PR_NUMBER=7 SHA=abc123 REVIEW_DIR="$TMP/review"
+  mkdir -p "$TMP/bin" "$FIX" "$REVIEW_DIR"
+  : >"$CALLS"
+  echo abc123 >"$FIX/head"
+  cat >"$TMP/bin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "$1" = api ] || { echo "unexpected gh: $*" >&2; exit 1; }
+case "$2" in
+  repos/me/demo/pulls/7) cat "$FIX/head" ;;
+  repos/me/demo/pulls/7/reviews) shift 2; echo "review $*" >>"$CALLS" ;;
+  *) echo "unexpected path: $2" >&2; exit 1 ;;
+esac
+SH
+  chmod +x "$TMP/bin/gh"
+  PATH="$TMP/bin:$PATH"
+  extract_approve_script >"$TMP/approve.sh"
+}
+
+@test "approve: review.md が「指摘はありません」だけなら、レビューした head を指して APPROVE を付ける" {
+  setup_approve
+  printf '\n指摘はありません\n\n' >"$REVIEW_DIR/review.md"
+  run "${TEST_BASH:-bash}" "$TMP/approve.sh"
+  [ "$status" -eq 0 ]
+  [ "$(wc -l <"$CALLS")" -eq 1 ]
+  grep -q 'commit_id=abc123' "$CALLS"
+  grep -q 'event=APPROVE' "$CALLS"
+}
+
+@test "approve: 句点が付いた「指摘はありません。」でも APPROVE を付ける" {
+  setup_approve
+  printf '指摘はありません。\r\n' >"$REVIEW_DIR/review.md"
+  run "${TEST_BASH:-bash}" "$TMP/approve.sh"
+  [ "$status" -eq 0 ]
+  grep -q 'event=APPROVE' "$CALLS"
+}
+
+@test "approve: 指摘が書かれているときは付けない" {
+  setup_approve
+  printf '### 重大\n- a.sh:3 が壊れる\n' >"$REVIEW_DIR/review.md"
+  run "${TEST_BASH:-bash}" "$TMP/approve.sh"
+  [ "$status" -eq 0 ]
+  [ ! -s "$CALLS" ]
+}
+
+@test "approve: 「指摘はありません」のあとに別の文章が続くときは付けない" {
+  setup_approve
+  printf '指摘はありません\nただし a.sh:3 は要確認です\n' >"$REVIEW_DIR/review.md"
+  run "${TEST_BASH:-bash}" "$TMP/approve.sh"
+  [ "$status" -eq 0 ]
+  [ ! -s "$CALLS" ]
+}
+
+@test "approve: レビューの間に head が変わっていたら付けない" {
+  setup_approve
+  echo def456 >"$FIX/head"
+  printf '指摘はありません\n' >"$REVIEW_DIR/review.md"
+  run "${TEST_BASH:-bash}" "$TMP/approve.sh"
+  [ "$status" -eq 0 ]
+  [ ! -s "$CALLS" ]
+}
+
+@test "approve: PR のコードを実行しない（チェックアウトしたスクリプトを呼ばず、権限は pull-requests: write）" {
+  script="$(extract_approve_script)"
+  [[ "$script" != *'.github/scripts'* ]] || return 1
+  [[ "$script" != *'./'* ]] || return 1
+  grep -qE '^  pull-requests: write$' "$WF"
+}

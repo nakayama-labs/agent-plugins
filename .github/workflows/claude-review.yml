@@ -265,3 +265,29 @@ jobs:
             cat "$review"
           } > "${REVIEW_DIR}/comment.md"
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "${REVIEW_DIR}/comment.md"
+      # Claude のレビューが「指摘はありません」の1行だけのときに限り、レビューした head を指して approve する（ADR 000412）。
+      # 無人のマージの承認に数える bot の approve の1つ。指摘があるとき・review.md の形が違うときは付けない。
+      # チェックアウトした PR のコードは信頼できないので、approve の処理はスクリプトに切り出さず、ここ（main のワークフロー）に書く。
+      # リポジトリの設定「Allow GitHub Actions to create and approve pull requests」が無効なら、ここで失敗する
+      # （コメントは済んでいる。ワークフローは必須のチェックではないので、PR のマージは妨げない）
+      - name: 指摘がなければ approve する
+        if: steps.diff.outputs.ok == 'true'
+        env:
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          review="${REVIEW_DIR}/review.md"
+          # 前後の空白と空行を除いて、「指摘はありません」だけの行（句点は有っても無くてもよい）かを確かめる
+          body="$(tr -d '\r' <"$review" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' || true)"
+          if [ "$body" != "指摘はありません" ] && [ "$body" != "指摘はありません。" ]; then
+            echo "指摘があるか、review.md の形が違うので、approve しません" >&2
+            exit 0
+          fi
+          # 間に push されて head が変わっていたら approve しない（古い head の承認を新しい head に付けない）
+          if [ "$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.head.sha')" != "$SHA" ]; then
+            echo "warn: PR の head が変わったので、approve しません" >&2
+            exit 0
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" \
+            -f commit_id="$SHA" -f event=APPROVE \
+            -f body="Claude のレビューで指摘がなかったので approve します（コミット \`${SHA}\`）。"
