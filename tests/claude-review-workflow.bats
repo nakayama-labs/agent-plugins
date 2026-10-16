@@ -122,14 +122,16 @@ SH
   chmod +x "$TMP/bin/gh"
   PATH="$TMP/bin:$PATH"
   # PR 1〜4 は、作ってから十分に経つ、同じリポジトリの、下書きでない PR
-  echo '[[1,2,3,4]]' | jq -c '.[0] | map({number: ., draft: false, created_at: "2020-01-01T00:00:00Z",
+  echo '[[1,2,3,4,5]]' | jq -c '.[0] | map({number: ., draft: false, created_at: "2020-01-01T00:00:00Z",
     head: {ref: "feature/x", repo: {full_name: "me/demo"}}})' >"$FIX/pulls.json"
   # 2：CodeRabbit のレビューがある
   echo '[{"user":{"login":"coderabbitai[bot]"}}]' >"$FIX/reviews-2.json"
   # 3：レビューは無いが、指摘なしの要約をコメントで返した（PR #403 の形）
   echo '[{"user":{"login":"coderabbitai[bot]"},"body":"No actionable comments were generated."}]' >"$FIX/comments-3.json"
   # 4：上限のコメントだけ
-  echo '[{"user":{"login":"coderabbitai[bot]"},"body":"rate limited by coderabbit.ai"}]' >"$FIX/comments-4.json"
+  echo '[{"user":{"login":"coderabbitai[bot]"},"body":"<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->  > Rate limit exceeded"}]' >"$FIX/comments-4.json"
+  # 5：上限の文言を引用しただけの要約のコメント（PR #407 の形）。レビュー済みと数える
+  echo '[{"user":{"login":"coderabbitai[bot]"},"body":"<!-- This is an auto-generated comment: summarize by coderabbit.ai --> the text rate limited by coderabbit.ai is quoted"}]' >"$FIX/comments-5.json"
 }
 
 run_patrol() {
@@ -137,7 +139,7 @@ run_patrol() {
   bash "$TMP/find.sh"
 }
 
-@test "見回りは、CodeRabbit のレビューも上限以外のコメントも無い PR（1・4）だけを選ぶ" {
+@test "見回りは、CodeRabbit のレビューも上限以外のコメントも無い PR（1・4）だけを選び、上限の文言を引用しただけの要約のコメントがある 5 は選ばない" {
   setup_patrol
   run_patrol
   [ "$(sed -n 's/^prs=//p' "$GITHUB_OUTPUT")" = '[1,4]' ]
@@ -162,4 +164,15 @@ run_patrol() {
     { print }' >"$TMP/broken.sh"
   bash "$TMP/broken.sh"
   grep -q '/issues/2/comments' "$CALLS"
+}
+
+@test "issue_comment の起動は、本文が上限の目印で始まるコメントだけで、本文のどこかの部分一致では起動しない" {
+  cond="$(sed -n '/^  find:/,/runs-on/p' "$WF")"
+  [[ "$cond" == *"startsWith(github.event.comment.body, '<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->')"* ]] || return 1
+  [[ "$cond" != *"contains(github.event.comment.body"* ]]
+}
+
+@test "上限の文言の部分一致（contains）で上限のコメントを判定する箇所は無い" {
+  run grep -rnE 'contains\(.*rate limited by coderabbit' "$WF"
+  [ "$status" -eq 1 ]
 }
