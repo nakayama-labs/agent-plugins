@@ -230,7 +230,11 @@ jobs:
                 | {tool_name, tool_input: (.tool_input | tostring | .[0:300])}'
               # 想定の形でなかったときは、プロンプトなどを含みうる中身は出さず、形（型）だけを出す
               shape_filter='if type == "array" then map(type) else type end'
-              if ! jq -c "$denials_filter" "$EXECUTION_FILE" >&2; then
+              # jq は出力を流しながら動くので、途中の要素で失敗すると前の要素だけを出してしまう。
+              # 変数に取り、成功したときだけ出す
+              if denials=$(jq -c "$denials_filter" "$EXECUTION_FILE"); then
+                printf '%s\n' "$denials" >&2
+              else
                 echo "diagnostics: execution_file を想定の形で読めません。形だけを出します" >&2
                 jq -c "$shape_filter" "$EXECUTION_FILE" >&2 ||
                   echo "diagnostics: execution_file は JSON として読めません" >&2

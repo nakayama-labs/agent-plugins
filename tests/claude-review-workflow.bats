@@ -12,10 +12,10 @@ setup() {
 
 @test "allowedTools の書き込みの許可は、review.md の1ファイルだけを相対パスで指し、Write と Edit の両方がある" {
   line="$(grep -- '--allowedTools' "$WF")"
-  [[ "$line" != *'env.REVIEW_DIR'* ]]
-  [[ "$line" != *'//'* ]]
-  [[ "$line" != *'**'* ]]
-  [[ "$line" == *'Write(/.claude-review/review.md)'* ]]
+  [[ "$line" != *'env.REVIEW_DIR'* ]] || return 1
+  [[ "$line" != *'//'* ]] || return 1
+  [[ "$line" != *'**'* ]] || return 1
+  [[ "$line" == *'Write(/.claude-review/review.md)'* ]] || return 1
   [[ "$line" == *'Edit(/.claude-review/review.md)'* ]]
 }
 
@@ -27,7 +27,7 @@ setup() {
   grep -q '\.claude-review/review\.md' "$WF"
   range="$(sed -n '/^        id: claude/,/^      - name:/p' "$WF")"
   # 範囲が空だと何も確かめずに通るので、範囲にプロンプトの review.md の指定があることを先に確かめる
-  [[ "$range" == *'.claude-review/review.md'* ]]
+  [[ "$range" == *'.claude-review/review.md'* ]] || return 1
   [[ "$range" != *REVIEW_DIR* ]]
 }
 
@@ -38,12 +38,16 @@ setup() {
   grep -q 'steps.claude.outputs.execution_file' "$WF"
 }
 
-# ワークフローから、jq のフィルタ（変数 $1 に代入している複数行の文字列）を取り出す
+# ワークフローから、jq のフィルタ（変数 $1 に代入している複数行の文字列）を取り出す。
+# 引用符は awk に -v で渡す（\x27 の解釈は awk の実装で違うため）。取り出せなければテストを落とす
 extract_filter() {
-  awk -v name="$1" '
-    index($0, name "=\x27") { sub(".*" name "=\x27", ""); on = 1 }
-    on { if (sub(/\x27$/, "")) { print; exit } print }
-  ' "$WF"
+  local out
+  out="$(awk -v name="$1" -v q="'" '
+    !on && index($0, name "=" q) { sub(".*" name "=" q, ""); on = 1 }
+    on { if (substr($0, length($0), 1) == q) { print substr($0, 1, length($0) - 1); exit } print }
+  ' "$WF")"
+  [ -n "$out" ] || { echo "フィルタ $1 を取り出せません" >&2; return 1; }
+  printf '%s\n' "$out"
 }
 
 @test "診断のフィルタは、拒否された操作の tool_name と300文字に切った tool_input を出す" {
@@ -64,7 +68,21 @@ extract_filter() {
   run jq -c "$shape" "$TMP/exec.json"
   [ "$status" -eq 0 ]
   [ "$output" = '"object"' ]
-  [[ "$output" != *SECRET* ]]
+  [[ "$output" != *SECRET* ]] || return 1
   # 生の先頭を出す書き方は使わない
   if grep -q 'head -c' "$WF"; then return 1; fi
+}
+
+@test "配列の途中の要素が想定外でも、診断は前の要素の内容を出さず、形だけを出す" {
+  # ワークフローの手順と同じく、フィルタの出力を変数に取り、成功したときだけ出す
+  filter="$(extract_filter denials_filter)"
+  shape="$(extract_filter shape_filter)"
+  echo '[{"type":"result","permission_denials":[{"tool_name":"Write","tool_input":"SECRET-PROMPT"}]},"oops"]' >"$TMP/exec.json"
+  if jq -c "$filter" "$TMP/exec.json" >/dev/null 2>&1; then return 1; fi
+  run jq -c "$shape" "$TMP/exec.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["object","string"]' ]
+  # ワークフローが、成功したときだけ変数から出す書き方になっている
+  # shellcheck disable=SC2016
+  grep -qF 'if denials=$(jq -c "$denials_filter" "$EXECUTION_FILE"); then' "$WF"
 }

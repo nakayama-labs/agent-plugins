@@ -95,7 +95,7 @@ shows_wt() {
 @test "git commit の後に、Issue のリンクだけを出す" {
   echo '[{"url": "https://github.com/me/demo/pull/42", "isCrossRepository": false}]' >"$FIX/pr-list.json"
   shows "git commit -m x" "Issue #17: https://github.com/me/demo/issues/17"
-  [[ "$output" != *"pull/42"* ]]
+  [[ "$output" != *"pull/42"* ]] || return 1
   [ "$(called pr-list)" -eq 0 ]
 }
 
@@ -114,7 +114,7 @@ shows_wt() {
 @test "ブランチを作るコマンドは、今のブランチではなく、作るブランチの Issue を出す" {
   fake_issue 23 '["feat"]'
   shows "git branch feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
-  [[ "$output" != *"issues/17"* ]]
+  [[ "$output" != *"issues/17"* ]] || return 1
   shows "git switch -c feat/23-x" "Issue #23: https://github.com/me/demo/issues/23"
   shows "git checkout -b feat/23-x origin/main" "Issue #23: https://github.com/me/demo/issues/23"
   git switch -q main
@@ -167,7 +167,7 @@ remote_branch() {
     eval "$c" >/dev/null 2>&1
     git rev-parse -q --verify refs/heads/feat/23-x >/dev/null
     shows "$c" "Issue #23: https://github.com/me/demo/issues/23"
-    [[ "$output" != *"issues/17"* ]]
+    [[ "$output" != *"issues/17"* ]] || return 1
     # gh issue view が、Issue #23 に対して呼ばれた
     after="$(called issue-view)"
     [ "$after" -gt "$before" ]
@@ -260,7 +260,7 @@ remote_branch() {
   [ "$status" -eq 0 ]
   msg="$(jq -r .systemMessage <<<"$output")"
   assert_equal "$(grep -c 'pull/42$' <<<"$msg")" 1
-  [[ "$msg" == *"Issue #17: https://github.com/me/demo/issues/17"* ]]
+  [[ "$msg" == *"Issue #17: https://github.com/me/demo/issues/17"* ]] || return 1
   run_hook "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/issue-create.sh\" --title x" '{"number": 50, "url": "https://github.com/me/demo/issues/50"}'
   [ "$status" -eq 0 ]
   [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue: https://github.com/me/demo/issues/50"* ]]
@@ -270,8 +270,8 @@ remote_branch() {
   run_hook "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh\"" \
     '{"created": true, "pr": {"number": 42, "url": "https://github.com/me/demo/pull/42"}, "body": "Closes https://github.com/me/demo/issues/99 と https://github.com/me/demo/pull/7"}'
   [ "$status" -eq 0 ]
-  [[ "$(jq -r .systemMessage <<<"$output")" == *"pull/42"* ]]
-  [[ "$output" != *"issues/99"* && "$output" != *"pull/7"* ]]
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"pull/42"* ]] || return 1
+  [[ "$output" != *"issues/99"* && "$output" != *"pull/7"* ]] || return 1
   run_hook "gh pr create --body x" "Creating pull request for feat/17-demo into main
 https://github.com/me/demo/pull/42"
   [ "$status" -eq 0 ]
@@ -302,7 +302,7 @@ https://github.com/me/demo/pull/42"
   assert_equal "$(jq -r .pr.url <<<"$out")" "https://github.com/me/demo/pull/42"
   run_hook "bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/pr-create.sh\" --issue 17 --body-file b.md" "$out"
   [ "$status" -eq 0 ]
-  [[ "$(jq -r .systemMessage <<<"$output")" == *"PR: https://github.com/me/demo/pull/42"* ]]
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"PR: https://github.com/me/demo/pull/42"* ]] || return 1
   [[ "$output" != *"issues/99"* ]]
 }
 
@@ -427,7 +427,7 @@ https://github.com/me/demo/pull/42"
 @test "git -C で指したリポジトリのブランチの Issue・PR・CI を出す" {
   make_wt
   shows_wt "git -C ../wt push"
-  [[ "$output" == *"PR を作る: https://github.com/me/demo/pull/new/feat/23-x"* ]]
+  [[ "$output" == *"PR を作る: https://github.com/me/demo/pull/new/feat/23-x"* ]] || return 1
   assert_equal "$(args pr-list 1)" "--head feat/23-x --state open --json url,isCrossRepository -q map(select(.isCrossRepository | not)) | .[0].url // empty"
   shows_wt "git -C $TMP/wt commit -m x"
 }
@@ -449,8 +449,8 @@ https://github.com/me/demo/pull/42"
   : >"$CALLS"
   run_hook "(cd ../wt && git commit -m x) && git push"
   [ "$status" -eq 0 ]
-  [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #23: https://github.com/me/demo/issues/23"* ]]
-  [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #17: https://github.com/me/demo/issues/17"* ]]
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #23: https://github.com/me/demo/issues/23"* ]] || return 1
+  [[ "$(jq -r .systemMessage <<<"$output")" == *"Issue #17: https://github.com/me/demo/issues/17"* ]] || return 1
   assert_equal "$(args pr-list 1)" "--head feat/17-demo --state open --json url,isCrossRepository -q map(select(.isCrossRepository | not)) | .[0].url // empty"
 }
 
@@ -591,7 +591,7 @@ EOF"
   fake_issue 23 '["feat"]'
   fake_issue 24 '["feat"]'
   shows "git switch -c feat/23-x && git branch feat/24-y" "Issue #23: https://github.com/me/demo/issues/23" "Issue #24: https://github.com/me/demo/issues/24"
-  [[ "$output" != *"issues/17"* ]]
+  [[ "$output" != *"issues/17"* ]] || return 1
   run_hook "git branch feat/23-x && git commit -m x && git commit -m y"
   assert_success
   assert_equal "$(jq -r .systemMessage <<<"$output")" "$(printf '関連するリンク:\n- Issue #17: https://github.com/me/demo/issues/17\n- Issue #23: https://github.com/me/demo/issues/23')"
