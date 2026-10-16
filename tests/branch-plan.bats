@@ -155,3 +155,12 @@ check_plan() {
   assert_failure 64
   assert_output --partial "不明な引数です: --foo"
 }
+
+@test "標準入力に JSON の値が複数あるときは 64（最後の値だけで判断しない）" {
+  run_script branch-plan.sh <<<"$BASE $BASE"
+  assert_failure 64
+  run_script branch-plan.sh <<<'{"behind":"x"} '"$BASE"
+  assert_failure 64
+  run_script branch-plan.sh <<<"$BASE"'{"behind":"x"}'
+  assert_failure 64
+}

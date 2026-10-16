@@ -160,3 +160,19 @@ check() {
   check '.queue = "queued" | .checks = "fail"' "wait queued"
   check '.queue = "queued" | .unresolved_threads = 3 | .bot_approved = false' "wait queued"
 }
+
+@test "標準入力に JSON の値が複数あるときは 64（最後の値だけで判定しない）。1つのオブジェクトは通る" {
+  run_script merge-decide.sh <<<'{"enabled":"x"} {}'
+  assert_failure 64
+  run_script merge-decide.sh <<<'{"enabled":"x"}'$'\n''{}'
+  assert_failure 64
+  run_script merge-decide.sh <<<"$READY $READY"
+  assert_failure 64
+  run_script merge-decide.sh <<<"{} $READY"
+  assert_failure 64
+  run_script merge-decide.sh <<<"$READY {\"enabled\":\"x\"}"
+  assert_failure 64
+  run_script merge-decide.sh <<<"$READY"
+  assert_success
+  assert_equal "$(wc -l <<<"$output" | tr -d ' ')" 1
+}

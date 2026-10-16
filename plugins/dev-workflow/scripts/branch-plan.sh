@@ -54,6 +54,9 @@ while [ $# -gt 0 ]; do
 done
 
 status="$(cat)"
+# JSON の値が複数あると、jq は値ごとに検証・判定して、最後の値だけが検証を通ってしまうので、先に1つだけかを確かめる
+jq -s -e 'length == 1' <<<"${status}" >/dev/null 2>&1 \
+  || dw_die "branch-status.sh の出力（JSON）を標準入力に渡してください（値は1つだけ）" 64
 jq -e '(.behind | type) == "number"' <<<"$status" >/dev/null 2>&1 \
   || dw_die "branch-status.sh の出力（JSON）を標準入力に渡してください" 64
 
