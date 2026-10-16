@@ -183,3 +183,14 @@ check() {
   assert_equal "${#lines[@]}" 1
   refute_output --partial '"action"'
 }
+
+@test "標準入力に JSON の値が複数あるときは 64（最後の値だけで判断しない）" {
+  run_script repair-next.sh <<<"$START $START"
+  assert_failure 64
+  run_script repair-next.sh <<<'{"step":"x"} '"$START"
+  assert_failure 64
+  run_script repair-next.sh <<<"$START"'{"step":"x"}'
+  assert_failure 64
+  run_script repair-next.sh <<<"$START"
+  assert_success
+}

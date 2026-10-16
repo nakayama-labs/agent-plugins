@@ -74,6 +74,9 @@ while [ $# -gt 0 ]; do
 done
 
 input="$(cat)"
+# JSON の値が複数あると、jq は値ごとに検証・判定して、最後の値だけが検証を通ってしまうので、先に1つだけかを確かめる
+jq -s -e 'length == 1' <<<"${input}" >/dev/null 2>&1 \
+  || dw_die "入力（JSON）は1つのオブジェクトにしてください" 64
 jq -e 'type == "object" and (.step == "start" or .step == "verify")' <<<"$input" >/dev/null 2>&1 \
   || dw_die "入力（JSON）の step は start か verify にしてください" 64
 if jq -e '.step == "start" and ((.status.plan.action | type) != "string")' <<<"$input" >/dev/null; then
