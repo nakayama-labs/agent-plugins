@@ -89,16 +89,21 @@ extract_filter() {
 
 # --- 見回り（find ジョブの schedule の run）を、偽の gh で実際に動かして確かめる（#404）---
 
-# find ジョブの「レビューする PR を選ぶ」の run のスクリプトを取り出す（インデント10字を除く）。取り出せなければ落とす
-extract_find_script() {
+# 目印の行（正規表現 $1）から続く `run: |` のブロックを、インデントを除いて取り出す。取り出せなければ落とす
+extract_run_script() {
   local out
-  out="$(awk '
-    !on && /^        id: find$/ { f = 1 }
+  out="$(awk -v marker="$1" -v indent="$2" '
+    !on && $0 ~ marker { f = 1 }
     f && !on && /^        run: \|$/ { on = 1; next }
-    on { if ($0 != "" && substr($0, 1, 10) != "          ") exit; print substr($0, 11) }
+    on { if ($0 != "" && substr($0, 1, indent) != sprintf("%" indent "s", "")) exit; print substr($0, indent + 1) }
   ' "$WF")"
-  [ -n "$out" ] || { echo "find の run を取り出せません" >&2; return 1; }
+  [ -n "$out" ] || { echo "$1 の run を取り出せません" >&2; return 1; }
   printf '%s\n' "$out"
+}
+
+# find ジョブの「レビューする PR を選ぶ」の run のスクリプトを取り出す
+extract_find_script() {
+  extract_run_script '^        id: find$' 10
 }
 
 # 偽の gh：api --paginate のパスを $CALLS に記録し、PR の一覧と、PR ごとのレビュー・コメントを $FIX から返す
@@ -178,30 +183,23 @@ run_patrol() {
 
 # --- 指摘がなければ approve する手順（ADR 000412）を、偽の gh で実際に動かして確かめる ---
 
-# 「指摘がなければ approve する」の run のスクリプトを取り出す（インデント10字を除く）。取り出せなければ落とす
+# 「指摘がなければ approve する」の run のスクリプトを取り出す
 extract_approve_script() {
-  local out
-  out="$(awk '
-    !on && /^      - name: 指摘がなければ approve する$/ { f = 1 }
-    f && !on && /^        run: \|$/ { on = 1; next }
-    on { if ($0 != "" && substr($0, 1, 10) != "          ") exit; print substr($0, 11) }
-  ' "$WF")"
-  [ -n "$out" ] || { echo "approve の run を取り出せません" >&2; return 1; }
-  printf '%s\n' "$out"
+  extract_run_script '^      - name: 指摘がなければ approve する$' 10
 }
 
-# 偽の gh：head の sha を $FIX/head で答え、reviews への書き込み（-f を含む呼び出し）を $CALLS に記録する
+# 偽の gh：PR の情報を $FIX/pull.json で答え、reviews への書き込み（-f を含む呼び出し）を $CALLS に記録する
 setup_approve() {
   FIX="$TMP/fix"; CALLS="$TMP/calls"
   export FIX CALLS GITHUB_REPOSITORY=me/demo PR_NUMBER=7 SHA=abc123 REVIEW_DIR="$TMP/review"
   mkdir -p "$TMP/bin" "$FIX" "$REVIEW_DIR"
   : >"$CALLS"
-  echo abc123 >"$FIX/head"
+  echo '{"head":{"sha":"abc123"},"user":{"type":"Bot"}}' >"$FIX/pull.json"
   cat >"$TMP/bin/gh" <<'SH'
 #!/usr/bin/env bash
 [ "$1" = api ] || { echo "unexpected gh: $*" >&2; exit 1; }
 case "$2" in
-  repos/me/demo/pulls/7) cat "$FIX/head" ;;
+  repos/me/demo/pulls/7) cat "$FIX/pull.json" ;;
   repos/me/demo/pulls/7/reviews) shift 2; echo "review $*" >>"$CALLS" ;;
   *) echo "unexpected path: $2" >&2; exit 1 ;;
 esac
@@ -247,7 +245,16 @@ SH
 
 @test "approve: レビューの間に head が変わっていたら付けない" {
   setup_approve
-  echo def456 >"$FIX/head"
+  echo '{"head":{"sha":"def456"},"user":{"type":"Bot"}}' >"$FIX/pull.json"
+  printf '指摘はありません\n' >"$REVIEW_DIR/review.md"
+  run "${TEST_BASH:-bash}" "$TMP/approve.sh"
+  [ "$status" -eq 0 ]
+  [ ! -s "$CALLS" ]
+}
+
+@test "approve: 作成者が bot でない（人の）PR には、指摘なしでも付けない" {
+  setup_approve
+  echo '{"head":{"sha":"abc123"},"user":{"type":"User"}}' >"$FIX/pull.json"
   printf '指摘はありません\n' >"$REVIEW_DIR/review.md"
   run "${TEST_BASH:-bash}" "$TMP/approve.sh"
   [ "$status" -eq 0 ]
