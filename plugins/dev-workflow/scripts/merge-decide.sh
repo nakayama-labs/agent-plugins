@@ -19,7 +19,7 @@
 #   checks                   必須のチェック（lint-result・test-result）。pass・pending・fail（既定 pending）
 #   unresolved_threads       resolved でないレビューのスレッドの数。0 以上の整数（既定 1）
 #   changes_requested        最新の状態が changes requested のレビュアーがいるか（人も bot も。省略・null は true として扱う）
-#   bot_approved             coderabbitai[bot] か github-actions[bot] の approve が、最新の head に付いているか（既定 false）
+#   bot_approved             レビューの bot（ADR 000412 で認めたもの）の approve が、最新の head に付いているか（既定 false）
 #   human_approved           write 以上の人の approve が、最新の head に付いているか（既定 false）
 #
 # 出力（JSON）: {action, reason}
