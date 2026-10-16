@@ -5,7 +5,8 @@ name: claude-review
 # CodeRabbit は上限で失敗したレビューを自動では再試行しないので、ここで拾う。
 #
 # - issue_comment：coderabbitai[bot] の「rate limited by coderabbit.ai」のコメント（書き換えでも起動する）
-# - schedule：作ってから一定の時間が経っても CodeRabbit のレビューも Claude のレビューも無い PR
+# - schedule：作ってから一定の時間が経っても、CodeRabbit のレビュー（上限以外のコメントを含む）も
+#   Claude のレビューも無い PR
 #   （障害など上限以外の理由、コメントの目印が変わったとき、Claude が失敗したときも拾う）
 #
 # 必須のチェックにしない。失敗しても PR のマージは妨げない。
@@ -52,8 +53,11 @@ jobs:
           else
             # 開いていて下書きでなく、作ってから STALE_MINUTES 分以上経つ、同じリポジトリの PR。
             # release-please のリリース PR は対象にしない。CodeRabbit のレビュー（上限のコメントは
-            # レビューではない）が無いものだけにする。Claude のレビュー済みかは review ジョブが確かめる
+            # レビューではない）も、上限以外のコメント（指摘なしなどをコメントで返したもの）も無いものだけにする。
+            # Claude のレビュー済みかは review ジョブが確かめる
             prs='[]'
+            reviews_filter='[.[][] | select(.user.login == "coderabbitai[bot]")] | length'
+            comments_filter='[.[][] | select(.user.login == "coderabbitai[bot]") | select(.body | contains("rate limited by coderabbit.ai") | not)] | length'
             # 開いている PR は、件数の上限を決めずにページングで全件取得する
             candidates=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" |
               jq -s '[.[][] | {number, isDraft: .draft, createdAt: .created_at, headRefName: .head.ref,
@@ -63,8 +67,16 @@ jobs:
                 | select(.headRefName | startswith("release-please--") | not)
                 | select((.createdAt | fromdateiso8601) < (now - $m * 60)) | .number' <<<"$candidates"); do
               reviewed=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${n}/reviews" |
-                jq -s '[.[][] | select(.user.login == "coderabbitai[bot]")] | length')
+                jq -s "$reviews_filter")
+              # CodeRabbit は、指摘なしなどのときに、PR のレビューではなくコメントで結果を返すことがある（#404）。
+              # 上限のコメントを除く CodeRabbit のコメントも、レビュー済みと数える。
+              # レビューがあれば済むので、コメントはレビューが無いときだけ取る
+              commented=0
               if [ "$reviewed" -eq 0 ]; then
+                commented=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${n}/comments" |
+                  jq -s "$comments_filter")
+              fi
+              if [ "$reviewed" -eq 0 ] && [ "$commented" -eq 0 ]; then
                 prs=$(jq -c --argjson n "$n" '. + [$n]' <<<"$prs")
               fi
             done
