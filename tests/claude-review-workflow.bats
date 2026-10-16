@@ -87,37 +87,79 @@ extract_filter() {
   grep -qF 'if denials=$(jq -c "$denials_filter" "$EXECUTION_FILE"); then' "$WF"
 }
 
-# 見回りが、CodeRabbit がコメントだけで結果（指摘なしを含む）を返した PR を未レビューと数えない（#404）
-@test "見回りは、CodeRabbit のレビューも、上限以外のコメントも無い PR だけを拾う" {
-  reviews="$(extract_filter reviews_filter)"
-  comments="$(extract_filter comments_filter)"
-  [ "$(echo '[]' | jq -s "$reviews")" = 0 ]
-  [ "$(echo '[]' | jq -s "$comments")" = 0 ]
-  # 指摘なしをコメントで返した（PR #403 の形）
-  c='[{"user":{"login":"coderabbitai[bot]"},"body":"No actionable comments were generated."}]'
-  [ "$(echo "$c" | jq -s "$comments")" = 1 ]
-  # 上限のコメントはレビューではないので数えない
-  r='[{"user":{"login":"coderabbitai[bot]"},"body":"rate limited by coderabbit.ai"}]'
-  [ "$(echo "$r" | jq -s "$comments")" = 0 ]
-  # 別の人のコメントは数えない
-  o='[{"user":{"login":"someone"},"body":"LGTM"}]'
-  [ "$(echo "$o" | jq -s "$comments")" = 0 ]
-  # PR のレビューは従来どおり数える
-  [ "$(echo '[{"user":{"login":"coderabbitai[bot]"}}]' | jq -s "$reviews")" = 1 ]
+# --- 見回り（find ジョブの schedule の run）を、偽の gh で実際に動かして確かめる（#404）---
+
+# find ジョブの「レビューする PR を選ぶ」の run のスクリプトを取り出す（インデント10字を除く）。取り出せなければ落とす
+extract_find_script() {
+  local out
+  out="$(awk '
+    !on && /^        id: find$/ { f = 1 }
+    f && !on && /^        run: \|$/ { on = 1; next }
+    on { if ($0 != "" && substr($0, 1, 10) != "          ") exit; print substr($0, 11) }
+  ' "$WF")"
+  [ -n "$out" ] || { echo "find の run を取り出せません" >&2; return 1; }
+  printf '%s\n' "$out"
 }
 
-@test "見回りは、レビューの件数とコメントの件数の両方が0のときだけ PR を選ぶ" {
-  # shellcheck disable=SC2016
-  grep -qF 'issues/${n}/comments' "$WF"
-  # shellcheck disable=SC2016
-  grep -qF 'if [ "$reviewed" -eq 0 ] && [ "$commented" -eq 0 ]; then' "$WF"
+# 偽の gh：api --paginate のパスを $CALLS に記録し、PR の一覧と、PR ごとのレビュー・コメントを $FIX から返す
+setup_patrol() {
+  FIX="$TMP/fix"; CALLS="$TMP/calls"
+  export FIX CALLS GITHUB_REPOSITORY=me/demo EVENT_NAME=schedule STALE_MINUTES=60 GITHUB_OUTPUT="$TMP/out"
+  mkdir -p "$TMP/bin" "$FIX"
+  : >"$CALLS"; : >"$GITHUB_OUTPUT"
+  cat >"$TMP/bin/gh" <<'SH'
+#!/usr/bin/env bash
+[ "$1 $2" = "api --paginate" ] || { echo "unexpected gh: $*" >&2; exit 1; }
+path="$3"
+echo "$path" >>"$CALLS"
+case "$path" in
+  *"/pulls?state=open"*) cat "$FIX/pulls.json" ;;
+  */pulls/*/reviews) n="${path#*/pulls/}"; n="${n%/reviews}"; cat "$FIX/reviews-$n.json" 2>/dev/null || echo '[]' ;;
+  */issues/*/comments) n="${path#*/issues/}"; n="${n%/comments}"; cat "$FIX/comments-$n.json" 2>/dev/null || echo '[]' ;;
+  *) echo "unexpected path: $path" >&2; exit 1 ;;
+esac
+SH
+  chmod +x "$TMP/bin/gh"
+  PATH="$TMP/bin:$PATH"
+  # PR 1〜4 は、作ってから十分に経つ、同じリポジトリの、下書きでない PR
+  echo '[[1,2,3,4]]' | jq -c '.[0] | map({number: ., draft: false, created_at: "2020-01-01T00:00:00Z",
+    head: {ref: "feature/x", repo: {full_name: "me/demo"}}})' >"$FIX/pulls.json"
+  # 2：CodeRabbit のレビューがある
+  echo '[{"user":{"login":"coderabbitai[bot]"}}]' >"$FIX/reviews-2.json"
+  # 3：レビューは無いが、指摘なしの要約をコメントで返した（PR #403 の形）
+  echo '[{"user":{"login":"coderabbitai[bot]"},"body":"No actionable comments were generated."}]' >"$FIX/comments-3.json"
+  # 4：上限のコメントだけ
+  echo '[{"user":{"login":"coderabbitai[bot]"},"body":"rate limited by coderabbit.ai"}]' >"$FIX/comments-4.json"
 }
 
-@test "見回りは、レビューがあるときはコメントを取らない（reviewed が 0 のときだけ取る）" {
-  # shellcheck disable=SC2016
-  grep -qF 'commented=0' "$WF"
-  # shellcheck disable=SC2016
-  range="$(sed -n '/^              if \[ "\$reviewed" -eq 0 \]; then$/,/^              fi$/p' "$WF")"
-  # shellcheck disable=SC2016
-  [[ "$range" == *'issues/${n}/comments'* ]]
+run_patrol() {
+  extract_find_script >"$TMP/find.sh"
+  bash "$TMP/find.sh"
+}
+
+@test "見回りは、CodeRabbit のレビューも上限以外のコメントも無い PR（1・4）だけを選ぶ" {
+  setup_patrol
+  run_patrol
+  [ "$(sed -n 's/^prs=//p' "$GITHUB_OUTPUT")" = '[1,4]' ]
+}
+
+@test "見回りは、CodeRabbit のレビューがある PR の comments を取らない" {
+  setup_patrol
+  run_patrol
+  # 2 にはレビューがあるので comments を呼ばない。レビューが無い 1・3・4 は呼ぶ
+  if grep -q '/issues/2/comments' "$CALLS"; then return 1; fi
+  grep -q '/issues/1/comments' "$CALLS"
+  grep -q '/issues/3/comments' "$CALLS"
+  grep -q '/issues/4/comments' "$CALLS"
+}
+
+@test "見回りは、コメント取得を常に行うように壊すと、レビューがある PR の comments を取って落ちる（テストの確認）" {
+  setup_patrol
+  # 取得の条件（if [ "$reviewed" -eq 0 ]; then ... fi）を外した版を作る
+  extract_find_script | awk '
+    /^ *if \[ "\$reviewed" -eq 0 \]; then$/ && !d { d = 1; next }
+    d == 1 && /^ *fi$/ { d = 2; next }
+    { print }' >"$TMP/broken.sh"
+  bash "$TMP/broken.sh"
+  grep -q '/issues/2/comments' "$CALLS"
 }
