@@ -42,7 +42,7 @@ issue: 412
   * `github-actions[bot]` の approve。`claude-review.yml` が、Claude のレビューが指摘なしのときに、レビューした head を指して付ける。指摘があるときは付けない。
 * 数える approve は、そのレビュアーの最新のレビューの状態が approved で、そのレビューの対象のコミットが PR の最新の head であるもの。push の後は数えない（レビューし直す）。
 * 最新の状態が changes requested のレビュアーが1人でもいれば（人も bot も）、マージしない。
-* `github-actions[bot]` の approve は、`claude-review.yml` だけが付ける。そのワークフローは、review.md の中身が「指摘はありません」の1行だけのときに限って approve する。ほかの文章（指摘の一覧など）のときは付けない。
+* `github-actions[bot]` の approve は、`claude-review.yml` だけが付け、PR の作成者が bot のとき（task-auto の PR など。無人のマージの対象と同じ）に限る。人が作った PR は、本文や差分に仕込んだ指示で Claude に「指摘なし」と書かせて自分の PR を approve させられるおそれがあるので、approve しない。そのワークフローは、review.md の中身が「指摘はありません」の1行だけのときに限って approve する。ほかの文章（指摘の一覧など）のときは付けない。
 * 人の approve を数えるときの決まり（write 以上・bot の approve は人の approve に数えない）は、000411 のとおり。`require_human_approval` が true のときは、bot の approve に加えて人の approve も要る。
 * `claude-review.yml` の approve は、GitHub Actions の `GITHUB_TOKEN` で付ける（新しい GitHub App は作らない）。task-auto の PR は task-auto の GitHub App が作るので、作成者と approve の主が別になり、GitHub の「自分の PR は approve できない」の制約に当たらない。ただし、リポジトリの設定「Allow GitHub Actions to create and approve pull requests」が有効でないと、approve は失敗する。
 
@@ -50,12 +50,12 @@ issue: 412
 
 * 良い点：CodeRabbit が動いている PR も、Claude が代わりにレビューした PR も、承認を approve の状態で同じように読める。
 * 良い点：CodeRabbit のプランが使えなくなっても、Claude のレビューの approve で無人マージの条件を満たせる（ただし、Claude のレビューは CodeRabbit が動かないときの代わりにしか動かないので、CodeRabbit が動かない状況が続く場合は、動く条件を見直す）。
-* 悪い点：Claude が書いた PR を、Claude がレビューして approve する。独立した確認ではないので、人の目を通す必要があるリポジトリは `require_human_approval` を true にする。
+* 悪い点：Claude が書いた PR を、Claude がレビューして approve する。bot の PR の本文や差分に紛れた指示で Claude が誘導されるおそれは、作成者が bot の PR に絞ることで、無人マージの対象の範囲に限っている。独立した確認ではないので、人の目を通す必要があるリポジトリは `require_human_approval` を true にする。
 * 悪い点：リポジトリの設定（Actions が PR を approve できる）と、CodeRabbit の設定（`request_changes_workflow`）が要る。どちらも欠けると approve が付かず、無人ではマージされない（安全側に倒れる）。
 
 ### 確認
 
-`claude-review.yml` の approve の付与を bats で確かめる（指摘なしのときだけ approve する・指摘があるときは付けない・レビューした head を指す・head が変わっていたら付けない）。マージの判定が bot の approve を数える部分（最新の head・最新の状態・changes requested）は、000411 の後続の子の Issue で、判定のスクリプトの bats で確かめる。
+`claude-review.yml` の approve の付与を bats で確かめる（指摘なしのときだけ approve する・指摘があるときは付けない・作成者が bot でない PR には付けない・レビューした head を指す・head が変わっていたら付けない）。マージの判定が bot の approve を数える部分（最新の head・最新の状態・changes requested）は、000411 の後続の子の Issue で、判定のスクリプトの bats で確かめる。
 
 ## 各案の長所と短所
 

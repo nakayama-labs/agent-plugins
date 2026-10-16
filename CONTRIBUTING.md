@@ -51,13 +51,14 @@ Claude のレビューは、上限のコメントがきっかけのときは同�
 無人でマージする条件の承認は、bot の approve が PR の最新の head に付いていることで読みます（[ADR 000412](docs/adr/000412-bot-approve-for-unattended-merge.md)。無人のマージの条件の全体は [ADR 000411](docs/adr/000411-unattended-merge-and-chain-guardrails.md)）。approve は次の2つで、どちらかが付けば足ります。今のマージの条件（上の「コミットと PR の規約」）は approve を求めていないので、approve が付かなくても、人が行うマージは妨げません。
 
 - **CodeRabbit の approve**（`coderabbitai[bot]`）：`.coderabbit.yaml` の `reviews.request_changes_workflow` が付けます。対応が要る指摘には Request changes を付け、最新のコミットのレビュー済み・必須のスレッドが resolved・Pre-Merge Checks が通る・head が変わっていないときに approve します。Request changes が付いた PR は、指摘に返信して resolved にした後（上の「指摘に手元の Claude Code で対応する」）、CodeRabbit が現在のコードを読み直して approve に変えます。
-- **Claude のレビューの approve**（`github-actions[bot]`）：`claude-review.yml` が、Claude のレビューが「指摘はありません」の1行だけのときに、レビューした head を指して付けます。指摘があるときや、レビューの間に push があったときは付けません。
+- **Claude のレビューの approve**（`github-actions[bot]`）：`claude-review.yml` が、Claude のレビューが「指摘はありません」の1行だけのときに、レビューした head を指して付けます。指摘があるときや、レビューの間に push があったとき、PR の作成者が bot でないとき（人の PR）は付けません。
 
 approve が付かないときは、次を確かめます。
 
 - push の後は、前の head の approve は数えません。新しい head へのレビューを待ちます
 - CodeRabbit の approve は Pro プランの機能です。試用期間が終わった後に使えるかは #160 で確かめます。使えなければ、`.coderabbit.yaml` の `request_changes_workflow` を消し、approve は Claude のレビューのものだけになります
 - Claude のレビューは、CodeRabbit が上限に当たったときと、レビューしないまま時間が経ったときにしか動きません。CodeRabbit が動いている PR には、Claude の approve は付きません
+- 人が作った PR には、Claude の approve は付きません（本文や差分に仕込んだ指示で、Claude に「指摘なし」と書かせて承認を得られないようにするためです）。task-auto の PR のように、作成者が bot の PR だけが対象です
 - Claude の approve が付かないときは、リポジトリの Settings → Actions → General の「Allow GitHub Actions to create and approve pull requests」が有効かを確かめます。無効だと、`claude-review.yml` の「指摘がなければ approve する」手順が失敗します（コメントは付いています）
 - Claude が書いた PR を Claude が approve するので、独立した確認ではありません。人の目を通したいときは、設定 `auto.merge.require_human_approval` を true にします（ADR 000411）
 
