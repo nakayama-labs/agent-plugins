@@ -285,7 +285,7 @@ Issue を指定したら、ユーザーの承認や入力なしで、着手・�
 - **書き込まずに止まる**：無効（`disabled`）・保留の列が無い（`no_hold`）・閉じた Issue や親の Issue（`not_startable`）は、Issue に何も書かずに止まる。どれに当たるか（と止まる条件のうちスクリプトで決めるもの）は `auto-check.sh` が `action` で決め、SKILL.md には値ごとにすることだけを書く。
 - GitHub Actions から task-auto を動かす形と、自動で作った PR の指摘への CI での対応は、#266 の別の子の Issue で扱う。
 - **無人のマージと連鎖**（#410・#411、[ADR 000411](adr/000411-unattended-merge-and-chain-guardrails.md)）：任意で、task-auto の PR を無人でマージし、次の Issue へ連鎖できる。条件と歯止めの正本は ADR 000411 の1か所。ADR 000267 の「マージしない」を、その条件を満たす PR に限って変える。
-  - 設定（すべて既定 false か 3）：`auto.merge.enabled`・`auto.merge.require_human_approval`・`auto.chain.enabled`・`auto.chain.max`（既定 3）。`allow_ai_merge` は見ない。
+  - 設定（すべて既定 false か 3）：`auto.merge.enabled`・`auto.merge.require_human_approval`・`auto.chain.enabled`・`auto.chain.max`（既定 3）・`auto.chain.wait_minutes`（既定 120）。`allow_ai_merge` は見ない。`auto.chain.enabled` を使うには `auto.merge.enabled` も true である必要がある。実装は後続の子の Issue で行い、それまでは task-auto はマージしない。
   - 対象は task-auto が作った同じリポジトリの下書きでない PR。必須のチェックの成功・スレッドの解決・最新の head への Claude のレビュー（未解決の指摘なし）・`no-auto-merge` ラベルが無いことを満たしたときだけ、マージキューに入れる。`require_human_approval` が true なら、最新の head への write 以上の人の approve も要る。
   - 連鎖は、1回で進める件数に上限（`auto.chain.max`）があり、task-auto が止まったとき・PR がマージされなかったとき・実行が失敗したときは次へ進まない。
 

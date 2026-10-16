@@ -37,33 +37,34 @@ task-auto は Issue から PR を出すまでを自動にし、マージは人�
 設定と対象
 
 * 設定 `auto.merge.enabled`（既定 false）が true であること。`allow_ai_merge` は見ない（手元の AI のマージの許可は、今までの意味のまま）。
-* 対象は、task-auto が作った、同じリポジトリの PR だけ。フォークからの PR と、人が作った PR は対象にしない。
+* 対象は、task-auto が作った、同じリポジトリの PR だけ。task-auto が作ったかは、PR の作成者が task-auto の GitHub App の bot であることで判定する（ブランチ名やラベルでは判定しない。人が同じ名前を付けられるため）。フォークからの PR と、人が作った PR は対象にしない。
 * 下書きの PR は対象にしない。
 
 マージしてよい状態（すべて満たすこと）
 
 * 必須のチェック（`lint-result`・`test-result`）が成功していること。
 * レビューのスレッドがすべて resolved であること。
-* Claude のレビュー（[CONTRIBUTING.md](../../CONTRIBUTING.md) の PR の自動レビュー）が、PR の最新の head に付いていて、未解決の指摘が残っていないこと。最新の head より前のレビューは数えない（push の後はレビューし直す）。
-* 設定 `auto.merge.require_human_approval`（既定 false）が true のときは、さらに、リポジトリの write 以上の人の approve が1件以上あること。approve の後に push があれば、その approve は数えない（最新の head に対する approve だけを数える）。bot の approve は人の approve に数えない。false のときは、人の approve は要らない（Claude のレビューだけでよい）。
-* PR に止める印（ラベル `no-auto-merge`）が付いていないこと。
+* Claude のレビュー（[CONTRIBUTING.md](../../CONTRIBUTING.md) の PR の自動レビュー）が、PR の最新の head に付いていて、未解決の指摘が残っていないこと。数えるのは、`.github/workflows/claude-review.yml` が bot の権限で付けたレビューだけで、人や別のアカウントが書いたコメントは、本文が同じでも数えない（偽装を防ぐため）。「未解決の指摘が残っていない」は、そのレビューが指摘なしを示していること、または指摘が行ごとのスレッドで、すべて resolved であること。最新の head より前のレビューは数えない（push の後はレビューし直す）。
+* 設定 `auto.merge.require_human_approval`（既定 false）が true のときは、さらに、リポジトリの write 以上の人の approve が1件以上あること。approve の後に push があれば、その approve は数えない（最新の head に対する approve だけを数える）。bot の approve は人の approve に数えない。各レビュアーの最新のレビューの状態で数え、最新が approved の人が1人以上いて、最新が changes requested の人が1人もいないこと（approve の後に別の人が changes requested を出した PR は、マージしない。GitHub が dismiss した approve は数えない）。false のときは、人の approve は要らない（Claude のレビューだけでよい）。
+* PR に止める印（ラベル `no-auto-merge`）が付いていないこと。キューに入れる直前にもう一度確かめる。キューに入れた後にこのラベルが付いたときは、マージの判定が、その PR をキューから外す。ラベルは、後続の子の Issue で `labels.json` に足して作る（足すまで、この条件は実装されない）。
 
 マージの方法
 
-* GitHub のマージキューに入れる（スカッシュ。[CONTRIBUTING.md](../../CONTRIBUTING.md) のマージの条件のとおり）。キューの CI が失敗して外れた PR は、自動では入れ直さず、止まる（下の連鎖の止まる条件）。
-* マージの判定は、条件を満たさなければ何もしない（理由のコメントも付けない）。条件を満たすまで、次の機会（イベントや見回り）で判定し直す。
+* GitHub のマージキューに入れる（スカッシュ。[CONTRIBUTING.md](../../CONTRIBUTING.md) のマージの条件のとおり）。キューから外れた PR は、その head を二度とキューに入れない。人が直して新しい head を push するまで待ち、新しい head が上の条件を満たしたときに、改めて判定する（外れた head のままでは、次の機会に条件を満たしていても入れ直さない）。連鎖は止まる（下の連鎖の止まる条件）。
+* マージの判定は、条件を満たさなければ何もしない（理由のコメントも付けない）。条件を満たすまで、次の機会（イベントや見回り）で判定し直す。ただし、キューから外れた head は判定の対象にしない。
 
 ### 連鎖の歯止め
 
 * 連鎖は任意で、設定 `auto.chain.enabled`（既定 false）が true のときだけ動く。true にするには、`auto.merge.enabled` も true である必要がある（無人でマージしない連鎖は、次の Issue に進める根拠が無いため）。
-* 1回の連鎖で進める件数の上限は、設定 `auto.chain.max`（既定 3）。最初の Issue も数える。上限に達したら、次の Issue へは進まない。
+* 1回の連鎖で進める件数の上限は、設定 `auto.chain.max`（既定 3）。最初の Issue も数える。上限に達したら、次の Issue へは進まない。連鎖は実行ごとに別のジョブで進むので、件数は連鎖の最初の Issue に付けるコメント（連鎖の id と、これまでに進めた Issue の番号の一覧）に残し、次の実行はそのコメントから数える。コメントが読めなければ、連鎖を終える。
 * 次の Issue の選び方は task-next と同じ（Todo の上から、依存と着手中の Issue との重なりを見て、先頭の1件）。task-auto を動かせる Issue（`auto-check.sh` が `proceed` と判定するもの）だけを選び、そうでなければ連鎖を終える。
 * 止める手段は2つ。(1) 設定 `auto.chain.enabled` か `auto.merge.enabled` を false にする。(2) 進行中の PR に `no-auto-merge` ラベルを付ける。付いている PR は、マージせず、次の Issue へも進まない。
 * 連鎖は、次のどれかに当たったら、次の Issue へ進まずに終える。
   * task-auto が止まった（保留の列に移した。[ADR 000195](000195-hold-status-column.md)）
-  * PR がマージされなかった（キューから外れた・条件を満たさないまま一定時間が過ぎた・`no-auto-merge` が付いた）
+  * PR がマージされなかった（キューから外れた・条件を満たさないまま、設定 `auto.chain.wait_minutes`（既定 120 分）が過ぎた・`no-auto-merge` が付いた）
   * 上限に達した
   * 実行が失敗した
+* 待つ時間の数え始めは、PR を出して task-auto が終わった時刻とする。
 * 連鎖が止まった理由は、直前の Issue か PR のコメントに残す。止まった連鎖は、人が原因を直してから、手で task-auto か連鎖を起動し直す（自動では再開しない）。
 
 ### 結果として起きること
@@ -73,10 +74,11 @@ task-auto は Issue から PR を出すまでを自動にし、マージは人�
 * 良い点：人の approve を必須にするかを設定で選べる。必須にすれば、人の目を通ったものだけが main に入る。
 * 悪い点：既定（`require_human_approval` が false）では、人がコードを見ないまま main に入りうる。Claude のレビューが見落とした問題は、main で見つかる。
 * 悪い点：設定とラベルが増える（`auto.merge.*`・`auto.chain.*`・`no-auto-merge`）。
+* 悪い点：この ADR を採択しても、設定・マージの判定・連鎖は後続の子の Issue で実装するまで動かない。それまでは、task-auto の SKILL.md などにある「マージしない」が実際の振る舞いで、この ADR の条件は実装した子の Issue から有効になる。
 
 ### 確認
 
-後続の子の Issue で、マージの判定のスクリプトを bats で確かめる（対象外の PR・各条件を欠く PR はマージしない、全部満たせばキューに入れる、`require_human_approval` の true と false の違い、古い head の approve とレビューを数えない、`no-auto-merge` で止まる）。連鎖は、上限・止まる条件ごとに確かめる。task-auto の SKILL.md と設計書 §8 に、この ADR の条件が書かれていることを `tests/skills.bats` で確かめる。
+後続の子の Issue で、マージの判定のスクリプトを bats で確かめる（対象外の PR・各条件を欠く PR はマージしない、全部満たせばキューに入れる、`require_human_approval` の true と false の違い、古い head の approve とレビューを数えない、`no-auto-merge` で止まる）。連鎖は、上限・止まる条件ごとに確かめる。task-auto の SKILL.md などの「マージしない」の文と `tests/skills.bats` の確認は、無人マージを実装する子の Issue で、この ADR の条件に合わせて直す。
 
 ## 各案の長所と短所
 
