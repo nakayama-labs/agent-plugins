@@ -128,8 +128,8 @@ SH
   echo '[{"user":{"login":"coderabbitai[bot]"}}]' >"$FIX/reviews-2.json"
   # 3：レビューは無いが、指摘なしの要約をコメントで返した（PR #403 の形）
   echo '[{"user":{"login":"coderabbitai[bot]"},"body":"No actionable comments were generated."}]' >"$FIX/comments-3.json"
-  # 4：上限のコメントだけ
-  echo '[{"user":{"login":"coderabbitai[bot]"},"body":"<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->  > Rate limit exceeded"}]' >"$FIX/comments-4.json"
+  # 4：上限のコメントだけ（要約の目印が先に付き、上限の目印が続く形）
+  echo '[{"user":{"login":"coderabbitai[bot]"},"body":"<!-- This is an auto-generated comment: summarize by coderabbit.ai --> <!-- This is an auto-generated comment: rate limited by coderabbit.ai -->  > Rate limit exceeded"}]' >"$FIX/comments-4.json"
   # 5：上限の文言を引用しただけの要約のコメント（PR #407 の形）。レビュー済みと数える
   echo '[{"user":{"login":"coderabbitai[bot]"},"body":"<!-- This is an auto-generated comment: summarize by coderabbit.ai --> the text rate limited by coderabbit.ai is quoted"}]' >"$FIX/comments-5.json"
 }
@@ -166,13 +166,12 @@ run_patrol() {
   grep -q '/issues/2/comments' "$CALLS"
 }
 
-@test "issue_comment の起動は、本文が上限の目印で始まるコメントだけで、本文のどこかの部分一致では起動しない" {
+@test "issue_comment の起動は、本文に上限の目印の HTML コメント全体を含むコメントで、文言だけの部分一致では起動しない" {
   cond="$(sed -n '/^  find:/,/runs-on/p' "$WF")"
-  [[ "$cond" == *"startsWith(github.event.comment.body, '<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->')"* ]] || return 1
-  [[ "$cond" != *"contains(github.event.comment.body"* ]]
+  [[ "$cond" == *"contains(github.event.comment.body, '<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->')"* ]]
 }
 
-@test "上限の文言の部分一致（contains）で上限のコメントを判定する箇所は無い" {
-  run grep -rnE 'contains\(.*rate limited by coderabbit' "$WF"
+@test "上限の文言だけの部分一致（目印の HTML コメント抜き）で上限のコメントを判定する箇所は無い" {
+  run grep -rnE "contains\(.*['\"]rate limited by coderabbit" "$WF"
   [ "$status" -eq 1 ]
 }

@@ -4,8 +4,8 @@ name: claude-review
 # 時間が経った PR に、Claude が代わりにレビューして PR にコメントする（このリポジトリ専用）。
 # CodeRabbit は上限で失敗したレビューを自動では再試行しないので、ここで拾う。
 #
-# - issue_comment：coderabbitai[bot] の上限のコメント（書き換えでも起動する）。上限のコメントは本文が
-#   `<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->` で始まる。要約のコメントが上限の文言を引用しても起動しないよう、本文のどこかでなく先頭で見る（#408）
+# - issue_comment：coderabbitai[bot] の上限のコメント（書き換えでも起動する）。上限のコメントは本文に
+#   `<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->` を含む（要約のマーカーが先に付く形もある）。要約のコメントが上限の文言を引用しても起動しないよう、文言だけでなく目印の HTML コメント全体で見る（#408）
 # - schedule：作ってから一定の時間が経っても、CodeRabbit のレビュー（上限以外のコメントを含む）も
 #   Claude のレビューも無い PR
 #   （障害など上限以外の理由、コメントの目印が変わったとき、Claude が失敗したときも拾う）
@@ -35,7 +35,7 @@ jobs:
       github.event_name != 'issue_comment' ||
       (github.event.issue.pull_request &&
       github.event.comment.user.login == 'coderabbitai[bot]' &&
-      startsWith(github.event.comment.body, '<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->'))
+      contains(github.event.comment.body, '<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -58,7 +58,7 @@ jobs:
             # Claude のレビュー済みかは review ジョブが確かめる
             prs='[]'
             reviews_filter='[.[][] | select(.user.login == "coderabbitai[bot]")] | length'
-            comments_filter='[.[][] | select(.user.login == "coderabbitai[bot]") | select(.body | startswith("<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->") | not)] | length'
+            comments_filter='[.[][] | select(.user.login == "coderabbitai[bot]") | select(.body | contains("<!-- This is an auto-generated comment: rate limited by coderabbit.ai -->") | not)] | length'
             # 開いている PR は、件数の上限を決めずにページングで全件取得する
             candidates=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" |
               jq -s '[.[][] | {number, isDraft: .draft, createdAt: .created_at, headRefName: .head.ref,
