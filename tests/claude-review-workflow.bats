@@ -112,3 +112,12 @@ extract_filter() {
   # shellcheck disable=SC2016
   grep -qF 'if [ "$reviewed" -eq 0 ] && [ "$commented" -eq 0 ]; then' "$WF"
 }
+
+@test "見回りは、レビューがあるときはコメントを取らない（reviewed が 0 のときだけ取る）" {
+  # shellcheck disable=SC2016
+  grep -qF 'commented=0' "$WF"
+  # shellcheck disable=SC2016
+  range="$(sed -n '/^              if \[ "\$reviewed" -eq 0 \]; then$/,/^              fi$/p' "$WF")"
+  # shellcheck disable=SC2016
+  [[ "$range" == *'issues/${n}/comments'* ]]
+}

@@ -42,7 +42,7 @@ Issue をやめることにしたときは、`/dev-workflow:task-cancel` を使�
 PR は、CodeRabbit（`.coderabbit.yaml`）が作ったときと、push のたびに（増分で）自動でレビューします。これは CodeRabbit の試用期間中だけの暫定の運用で、試用期間が終わったら、作ったときに1回だけレビューする運用に戻します（#160）。指摘への対応は、下の「指摘に手元の Claude Code で対応する」のとおり、返信で行います。CodeRabbit のレビューは1時間あたりの回数に上限があり、上限で失敗したレビューは自動では再試行されません。そこで、次のときは Claude が代わりにレビューして PR にコメントします（`.github/workflows/claude-review.yml`）。
 
 - CodeRabbit が上限に引っかかったとき（`coderabbitai[bot]` の `rate limited by coderabbit.ai` のコメントがきっかけです）
-- PR を作ってから1時間経っても CodeRabbit のレビューが無いとき（30分ごとに見回ります。障害など上限以外の理由で動かなかった場合も拾います）
+- PR を作ってから1時間経っても CodeRabbit のレビューも、上限以外のコメント（指摘なしなどをコメントで返したもの）も無いとき（30分ごとに見回ります。障害など上限以外の理由で動かなかった場合も拾います）
 
 Claude のレビューは、上限のコメントがきっかけのときは同じコミットに1回しか付きません（試用期間中は、push のたびに CodeRabbit のレビューが上限に当たりやすく、上限に当たった push のコミットごとに付くので、PR あたりの数が増えることがあります）。見回りは、その PR に Claude のレビューが1件でもあれば動かないので、CodeRabbit が動かない状況でも、レビューが際限なく付くことはありません。head が同じリポジトリの PR だけが対象で、フォークからの PR は対象外です。どちらのレビューも、この CONTRIBUTING.md と `plugins/dev-workflow/review/*.md`・`.claude/dev-workflow/review/*.md` のレビューの観点に沿って行います。ワークフローは必須のチェックではないので、失敗しても PR のマージは妨げません。
 
