@@ -183,10 +183,11 @@ jobs:
           # Claude は読み取りと、結果のファイル（review.md）の書き込みだけ。コメントはあとのステップが書く。
           # 許可の規則のパスは、リポジトリの根からの相対（先頭が / のもの）で書く。
           # 絶対パス（//home/runner/...）の Write の規則は、実行で拒否されて review.md が書けない
-          # ことがあった（#405）。書き込みは Write と Edit のどちらで来ても通るよう、Edit の規則で許可する
+          # ことがあった（#405）。書き込める先は review.md の1ファイルだけにする
+          # （pr.diff・pr.json は信頼できない入力なので書き換えさせない）。Write と Edit の両方を許可する
           claude_args: >-
             --max-turns 30
-            --allowedTools "Read,Glob,Grep,Edit(/.claude-review/**)"
+            --allowedTools "Read,Glob,Grep,Write(/.claude-review/review.md),Edit(/.claude-review/review.md)"
           prompt: |
             あなたはこのリポジトリの PR レビュアーです。PR #${{ matrix.pr }} の変更をレビューしてください。
 
@@ -224,8 +225,12 @@ jobs:
             ls -la "$REVIEW_DIR" >&2 || true
             if [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ]; then
               echo "diagnostics: 拒否された操作" >&2
-              jq -c '[.[] | select(.type == "result") | .permission_denials // []] | add // [] | .[]
-                | {tool_name, tool_input}' "$EXECUTION_FILE" >&2 || true
+              # 公開ログに出るので、tool_input は先頭の300文字に切り詰める
+              if ! jq -c '[.[] | select(.type == "result") | .permission_denials // []] | add // [] | .[]
+                | {tool_name, tool_input: (.tool_input | tostring | .[0:300])}' "$EXECUTION_FILE" >&2; then
+                echo "diagnostics: execution_file を想定の形で読めません。先頭を出します" >&2
+                head -c 2000 "$EXECUTION_FILE" >&2 || true
+              fi
             fi
             echo "error: Claude のレビュー結果がありません" >&2
             exit 1

@@ -10,11 +10,13 @@ setup() {
   WF="$BATS_TEST_DIRNAME/../.github/workflows/claude-review.yml"
 }
 
-@test "allowedTools の書き込みの許可は、環境変数の絶対パスでなく、リポジトリの根からの相対パスで書く" {
+@test "allowedTools の書き込みの許可は、review.md の1ファイルだけを相対パスで指し、Write と Edit の両方がある" {
   line="$(grep -- '--allowedTools' "$WF")"
   [[ "$line" != *'env.REVIEW_DIR'* ]]
   [[ "$line" != *'//'* ]]
-  [[ "$line" == *'Edit(/.claude-review/**)'* ]]
+  [[ "$line" != *'**'* ]]
+  [[ "$line" == *'Write(/.claude-review/review.md)'* ]]
+  [[ "$line" == *'Edit(/.claude-review/review.md)'* ]]
 }
 
 @test "REVIEW_DIR は、許可の規則が指す .claude-review ディレクトリと同じ" {
@@ -23,7 +25,7 @@ setup() {
 
 @test "プロンプトは review.md を相対パスで指し、絶対パスの REVIEW_DIR を使わない" {
   grep -q '\.claude-review/review\.md' "$WF"
-  run bash -c "sed -n '/^          prompt: |/,/^      - name: PR にコメントする/p' '$WF' | grep -c 'REVIEW_DIR'"
+  run bash -c "sed -n '/^        id: claude/,/^      - name:/p' '$WF' | grep -c 'REVIEW_DIR'"
   [ "$output" = 0 ]
 }
 
@@ -32,4 +34,10 @@ setup() {
   grep -qF 'ls -la "$REVIEW_DIR"' "$WF"
   grep -q 'permission_denials' "$WF"
   grep -q 'steps.claude.outputs.execution_file' "$WF"
+}
+
+@test "診断は tool_input を切り詰め、jq が失敗したら execution_file の先頭を出す" {
+  grep -qF '.[0:300]' "$WF"
+  # shellcheck disable=SC2016
+  grep -qF 'head -c 2000 "$EXECUTION_FILE"' "$WF"
 }
