@@ -25,8 +25,10 @@ setup() {
 
 @test "プロンプトは review.md を相対パスで指し、絶対パスの REVIEW_DIR を使わない" {
   grep -q '\.claude-review/review\.md' "$WF"
-  run bash -c "sed -n '/^        id: claude/,/^      - name:/p' '$WF' | grep -c 'REVIEW_DIR'"
-  [ "$output" = 0 ]
+  range="$(sed -n '/^        id: claude/,/^      - name:/p' "$WF")"
+  # 範囲が空だと何も確かめずに通るので、範囲にプロンプトの review.md の指定があることを先に確かめる
+  [[ "$range" == *'.claude-review/review.md'* ]]
+  [[ "$range" != *REVIEW_DIR* ]]
 }
 
 @test "review.md が無いときの失敗は、ディレクトリの内容と拒否された操作を出す" {
@@ -36,8 +38,33 @@ setup() {
   grep -q 'steps.claude.outputs.execution_file' "$WF"
 }
 
-@test "診断は tool_input を切り詰め、jq が失敗したら execution_file の先頭を出す" {
-  grep -qF '.[0:300]' "$WF"
-  # shellcheck disable=SC2016
-  grep -qF 'head -c 2000 "$EXECUTION_FILE"' "$WF"
+# ワークフローから、jq のフィルタ（変数 $1 に代入している複数行の文字列）を取り出す
+extract_filter() {
+  awk -v name="$1" '
+    index($0, name "=\x27") { sub(".*" name "=\x27", ""); on = 1 }
+    on { if (sub(/\x27$/, "")) { print; exit } print }
+  ' "$WF"
+}
+
+@test "診断のフィルタは、拒否された操作の tool_name と300文字に切った tool_input を出す" {
+  filter="$(extract_filter denials_filter)"
+  long="$(printf 'x%.0s' $(seq 1 500))"
+  echo "[{\"type\":\"system\"},{\"type\":\"result\",\"permission_denials\":[{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/a\",\"content\":\"$long\"}}]}]" >"$TMP/exec.json"
+  run jq -c "$filter" "$TMP/exec.json"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .tool_name <<<"$output")" = Write ]
+  [ "$(jq -r '.tool_input | length' <<<"$output")" = 300 ]
+}
+
+@test "想定外の形（オブジェクト）では、診断のフィルタは失敗し、形のフィルタは中身を出さない" {
+  filter="$(extract_filter denials_filter)"
+  shape="$(extract_filter shape_filter)"
+  echo '{"prompt":"SECRET-PROMPT","x":1}' >"$TMP/exec.json"
+  if jq -c "$filter" "$TMP/exec.json" 2>/dev/null; then return 1; fi
+  run jq -c "$shape" "$TMP/exec.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = '"object"' ]
+  [[ "$output" != *SECRET* ]]
+  # 生の先頭を出す書き方は使わない
+  if grep -q 'head -c' "$WF"; then return 1; fi
 }
