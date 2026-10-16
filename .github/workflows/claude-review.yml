@@ -173,6 +173,7 @@ jobs:
           fi
           echo "ok=true" >> "$GITHUB_OUTPUT"
       - name: Claude でレビューする
+        id: claude
         if: steps.diff.outputs.ok == 'true'
         uses: anthropics/claude-code-action@v1
         with:
@@ -180,10 +181,13 @@ jobs:
           github_token: ${{ github.token }}
           allowed_bots: coderabbitai[bot]
           # Claude は読み取りと、結果のファイル（review.md）の書き込みだけ。コメントはあとのステップが書く。
-          # Write の絶対パスの規則は、先頭を // にする
+          # 許可の規則のパスは、リポジトリの根からの相対（先頭が / のもの）で書く。
+          # 絶対パス（//home/runner/...）の Write の規則は、実行で拒否されて review.md が書けない
+          # ことがあった（#405）。書き込める先は review.md の1ファイルだけにする
+          # （pr.diff・pr.json は信頼できない入力なので書き換えさせない）。Write と Edit の両方を許可する
           claude_args: >-
             --max-turns 30
-            --allowedTools "Read,Glob,Grep,Write(/${{ env.REVIEW_DIR }}/review.md)"
+            --allowedTools "Read,Glob,Grep,Write(/.claude-review/review.md),Edit(/.claude-review/review.md)"
           prompt: |
             あなたはこのリポジトリの PR レビュアーです。PR #${{ matrix.pr }} の変更をレビューしてください。
 
@@ -191,9 +195,9 @@ jobs:
             2. plugins/dev-workflow/review/*.md と .claude/dev-workflow/review/*.md（あれば）を読む。
                これがこのリポジトリのレビューの観点。各ファイルの frontmatter に実行の条件があるものは、
                この PR が条件に当てはまるときだけ使う
-            3. ${{ env.REVIEW_DIR }}/pr.json（PR のタイトルと本文）と ${{ env.REVIEW_DIR }}/pr.diff（差分）を読み、
+            3. .claude-review/pr.json（PR のタイトルと本文）と .claude-review/pr.diff（差分）を読み、
                必要ならチェックアウトしたファイルも読んで、ルールと観点に沿ってレビューする
-            4. 結果を ${{ env.REVIEW_DIR }}/review.md に Markdown で書く
+            4. 結果を .claude-review/review.md に Markdown で書く（作業ディレクトリからの相対パスで、Write ツールを使う）
 
             review.md の書き方:
             - 日本語。指摘ごとに、ファイルと行、何が問題か、どう直すかを書く
@@ -205,6 +209,7 @@ jobs:
         env:
           MARKER: ${{ steps.pr.outputs.marker }}
           SHA: ${{ steps.pr.outputs.sha }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
           set -euo pipefail
           # Claude の実行中に head が変わっていたら、古い sha のレビューを現在の PR に投稿しない。
@@ -215,6 +220,26 @@ jobs:
           fi
           review="${REVIEW_DIR}/review.md"
           if [ ! -s "$review" ]; then
+            # 原因が分かるよう、ディレクトリの内容と、拒否された操作（permission_denials）を出す
+            echo "diagnostics: ${REVIEW_DIR} の内容" >&2
+            ls -la "$REVIEW_DIR" >&2 || true
+            if [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ]; then
+              echo "diagnostics: 拒否された操作" >&2
+              # 公開ログに出るので、tool_input は先頭の300文字に切り詰める
+              denials_filter='[.[] | select(.type == "result") | .permission_denials // []] | add // [] | .[]
+                | {tool_name, tool_input: (.tool_input | tostring | .[0:300])}'
+              # 想定の形でなかったときは、プロンプトなどを含みうる中身は出さず、形（型）だけを出す
+              shape_filter='if type == "array" then map(type) else type end'
+              # jq は出力を流しながら動くので、途中の要素で失敗すると前の要素だけを出してしまう。
+              # 変数に取り、成功したときだけ出す
+              if denials=$(jq -c "$denials_filter" "$EXECUTION_FILE"); then
+                printf '%s\n' "$denials" >&2
+              else
+                echo "diagnostics: execution_file を想定の形で読めません。形だけを出します" >&2
+                jq -c "$shape_filter" "$EXECUTION_FILE" >&2 ||
+                  echo "diagnostics: execution_file は JSON として読めません" >&2
+              fi
+            fi
             echo "error: Claude のレビュー結果がありません" >&2
             exit 1
           fi

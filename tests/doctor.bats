@@ -443,9 +443,9 @@ required_check() { jq -c '.checks[] | select(.name == "required-checks") | [.ok,
   assert_success
   assert_equal "$(jq -c '.[0:2]' <<<"$(required_check)")" '[false,"warn"]'
   detail="$(jq -r '.[2]' <<<"$(required_check)")"
-  [[ "$detail" == "main へのマージに必須のチェックがありません。"* ]]
-  [[ "$detail" == *"/dev-workflow:repo-setup"* ]]
-  [[ "$detail" == *'"require_status_checks": false'* ]]
+  [[ "$detail" == "main へのマージに必須のチェックがありません。"* ]] || return 1
+  [[ "$detail" == *"/dev-workflow:repo-setup"* ]] || return 1
+  [[ "$detail" == *'"require_status_checks": false'* ]] || return 1
   # 必須のチェックが無ければ、キューも strict も意味がないので知らせない
   assert_equal "$(merge_check)" ""
   # キューを使っていても、必須のチェックが無ければ知らせる
