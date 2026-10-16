@@ -46,10 +46,27 @@ PR は、CodeRabbit（`.coderabbit.yaml`）が作ったときと、push のた�
 
 Claude のレビューは、上限のコメントがきっかけのときは同じコミットに1回しか付きません（試用期間中は、push のたびに CodeRabbit のレビューが上限に当たりやすく、上限に当たった push のコミットごとに付くので、PR あたりの数が増えることがあります）。見回りは、その PR に Claude のレビューが1件でもあれば動かないので、CodeRabbit が動かない状況でも、レビューが際限なく付くことはありません。head が同じリポジトリの PR だけが対象で、フォークからの PR は対象外です。どちらのレビューも、この CONTRIBUTING.md と `plugins/dev-workflow/review/*.md`・`.claude/dev-workflow/review/*.md` のレビューの観点に沿って行います。ワークフローは必須のチェックではないので、失敗しても PR のマージは妨げません。
 
+### bot の approve
+
+無人でマージする条件の承認は、bot の approve が PR の最新の head に付いていることで読みます（[ADR 000412](docs/adr/000412-bot-approve-for-unattended-merge.md)。無人のマージの条件の全体は [ADR 000411](docs/adr/000411-unattended-merge-and-chain-guardrails.md)）。approve は次の2つで、どちらかが付けば足ります。今のマージの条件（上の「コミットと PR の規約」）は approve を求めていないので、approve が付かなくても、人が行うマージは妨げません。
+
+- **CodeRabbit の approve**（`coderabbitai[bot]`）：`.coderabbit.yaml` の `reviews.request_changes_workflow` が付けます。対応が要る指摘には Request changes を付け、最新のコミットのレビュー済み・必須のスレッドが resolved・Pre-Merge Checks が通る・head が変わっていないときに approve します。Request changes が付いた PR は、指摘に返信して resolved にした後（上の「指摘に手元の Claude Code で対応する」）、CodeRabbit が現在のコードを読み直して approve に変えます。
+- **Claude のレビューの approve**（`github-actions[bot]`）：`claude-review.yml` が、Claude のレビューが「指摘はありません」の1行だけのときに、レビューした head を指して付けます。指摘があるときや、レビューの間に push があったとき、PR の作成者が bot でないとき（人の PR）は付けません。
+
+approve が付かないときは、次を確かめます。
+
+- push の後は、前の head の approve は数えません。新しい head へのレビューを待ちます
+- CodeRabbit の approve は Pro プランの機能です。試用期間が終わった後に使えるかは #160 で確かめます。使えなければ、`.coderabbit.yaml` の `request_changes_workflow` を消し、approve は Claude のレビューのものだけになります
+- Claude のレビューは、CodeRabbit が上限に当たったときと、レビューしないまま時間が経ったときにしか動きません。CodeRabbit が動いている PR には、Claude の approve は付きません
+- 人が作った PR には、Claude の approve は付きません（本文や差分に仕込んだ指示で、Claude に「指摘なし」と書かせて承認を得られないようにするためです）。task-auto の PR のように、作成者が bot の PR だけが対象です
+- Claude の approve が付かないときは、リポジトリの Settings → Actions → General の「Allow GitHub Actions to create and approve pull requests」が有効かを確かめます。無効だと、`claude-review.yml` の「指摘がなければ approve する」手順が失敗します（コメントは付いています）
+- Claude が書いた PR を Claude が approve するので、独立した確認ではありません。人の目を通したいときは、設定 `auto.merge.require_human_approval` を true にします（ADR 000411）
+
 ### 設定の手順
 
 1. CodeRabbit の GitHub App をこのリポジトリに入れます（公開リポジトリは OSS プランで無料です）。
 2. 手元で `claude setup-token` を実行して OAuth トークンを作り、リポジトリのシークレット `CLAUDE_CODE_OAUTH_TOKEN` に登録します。
+3. リポジトリの Settings → Actions → General で、「Allow GitHub Actions to create and approve pull requests」を有効にします（Claude のレビューの approve に要ります）。
 
 ### 指摘に手元の Claude Code で対応する
 
