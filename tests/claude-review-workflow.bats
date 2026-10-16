@@ -86,3 +86,29 @@ extract_filter() {
   # shellcheck disable=SC2016
   grep -qF 'if denials=$(jq -c "$denials_filter" "$EXECUTION_FILE"); then' "$WF"
 }
+
+# 見回りが、CodeRabbit がコメントだけで結果（指摘なしを含む）を返した PR を未レビューと数えない（#404）
+@test "見回りは、CodeRabbit のレビューも、上限以外のコメントも無い PR だけを拾う" {
+  reviews="$(extract_filter reviews_filter)"
+  comments="$(extract_filter comments_filter)"
+  [ "$(echo '[]' | jq -s "$reviews")" = 0 ]
+  [ "$(echo '[]' | jq -s "$comments")" = 0 ]
+  # 指摘なしをコメントで返した（PR #403 の形）
+  c='[{"user":{"login":"coderabbitai[bot]"},"body":"No actionable comments were generated."}]'
+  [ "$(echo "$c" | jq -s "$comments")" = 1 ]
+  # 上限のコメントはレビューではないので数えない
+  r='[{"user":{"login":"coderabbitai[bot]"},"body":"rate limited by coderabbit.ai"}]'
+  [ "$(echo "$r" | jq -s "$comments")" = 0 ]
+  # 別の人のコメントは数えない
+  o='[{"user":{"login":"someone"},"body":"LGTM"}]'
+  [ "$(echo "$o" | jq -s "$comments")" = 0 ]
+  # PR のレビューは従来どおり数える
+  [ "$(echo '[{"user":{"login":"coderabbitai[bot]"}}]' | jq -s "$reviews")" = 1 ]
+}
+
+@test "見回りは、レビューの件数とコメントの件数の両方が0のときだけ PR を選ぶ" {
+  # shellcheck disable=SC2016
+  grep -qF 'issues/${n}/comments' "$WF"
+  # shellcheck disable=SC2016
+  grep -qF 'if [ "$reviewed" -eq 0 ] && [ "$commented" -eq 0 ]; then' "$WF"
+}
