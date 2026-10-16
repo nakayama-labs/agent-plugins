@@ -98,6 +98,41 @@ check() {
   assert_failure 64
   run_script merge-decide.sh <<<'[]'
   assert_failure 64
+  # 整数でない・負の unresolved_threads
+  for v in -1 0.5; do
+    run_script merge-decide.sh <<<"{\"unresolved_threads\":$v}"
+    assert_failure 64
+  done
+  # false など、許可値でも null でもない queue・checks・state（既定の値に化けさせない）
+  for f in queue checks state; do
+    for v in false 0 '[]'; do
+      run_script merge-decide.sh <<<"{\"$f\":$v}"
+      assert_failure 64
+    done
+  done
+}
+
+@test "null と省略は既定の値（unresolved_threads が 0 は許す）" {
+  check '.queue = null' "merge ready"
+  check '.checks = null' "wait checks_pending"
+  check '.unresolved_threads = null' "wait unresolved_threads"
+  check '.unresolved_threads = 0' "merge ready"
+}
+
+@test "表の順序：removed は changes_requested・チェック・スレッドより先、changes_requested はチェックより先" {
+  check '.queue = "removed" | .changes_requested = true' "stop removed_from_queue"
+  check '.queue = "removed" | .checks = "fail"' "stop removed_from_queue"
+  check '.queue = "removed" | .unresolved_threads = 2' "stop removed_from_queue"
+  check '.changes_requested = true | .checks = "fail" | .unresolved_threads = 2' "wait changes_requested"
+  check '.checks = "fail" | .unresolved_threads = 2 | .bot_approved = false' "wait checks_failed"
+  check '.unresolved_threads = 2 | .bot_approved = false' "wait unresolved_threads"
+}
+
+@test "空の入力・JSON でない入力は 64" {
+  run_script merge-decide.sh <<<''
+  assert_failure 64
+  run_script merge-decide.sh <<<'not json'
+  assert_failure 64
 }
 
 @test "--help は判断の表を出し、不明な引数は 64" {

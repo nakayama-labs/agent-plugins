@@ -17,7 +17,7 @@
 #   no_auto_merge            ラベル no-auto-merge が付いているか（既定 false）
 #   queue                    none（キューに入っていない）・queued（入っている）・removed（今の head はキューから外れた）
 #   checks                   必須のチェック（lint-result・test-result）。pass・pending・fail（既定 pending）
-#   unresolved_threads       resolved でないレビューのスレッドの数（既定 1）
+#   unresolved_threads       resolved でないレビューのスレッドの数。0 以上の整数（既定 1）
 #   changes_requested        最新の状態が changes requested のレビュアーがいるか（人も bot も。既定 false）
 #   bot_approved             coderabbitai[bot] か github-actions[bot] の approve が、最新の head に付いているか（既定 false）
 #   human_approved           write 以上の人の approve が、最新の head に付いているか（既定 false）
@@ -67,15 +67,17 @@ jq -e '
   and (.enabled | bool) and (.require_human_approval | bool) and (.fork | bool) and (.task_auto_author | bool)
   and (.draft | bool) and (.no_auto_merge | bool) and (.changes_requested | bool) and (.bot_approved | bool)
   and (.human_approved | bool)
-  and (.unresolved_threads == null or (.unresolved_threads | type) == "number")
+  and (.unresolved_threads == null or ((.unresolved_threads | type) == "number" and .unresolved_threads >= 0 and .unresolved_threads == (.unresolved_threads | floor)))
   and (.state == null or (.state | type) == "string")
-  and ((.queue // "none") | IN("none", "queued", "removed"))
-  and ((.checks // "pending") | IN("pass", "pending", "fail"))' <<<"$input" >/dev/null 2>&1 \
+  and (.queue == null or (.queue | IN("none", "queued", "removed")))
+  and (.checks == null or (.checks | IN("pass", "pending", "fail")))' <<<"$input" >/dev/null 2>&1 \
   || dw_die "入力の型か値が違います（真偽値の項目、数値の unresolved_threads、queue は none・queued・removed、checks は pass・pending・fail）" 64
 
+# 既定の値は、検証の後に、ここで1か所に置く（検証は null か許可値だけを通すので、false などが既定の値に化けることは無い）
 jq -c '
   def r($a; $why): {action: $a, reason: $why};
-  if .enabled != true then r("skip"; "disabled")
+  (.queue //= "none" | .checks //= "pending" | .unresolved_threads //= 1)
+  | if .enabled != true then r("skip"; "disabled")
   elif .state != "OPEN" then r("skip"; "not_open")
   elif .fork != false then r("skip"; "fork")
   elif .task_auto_author != true then r("skip"; "not_task_auto")
@@ -85,9 +87,9 @@ jq -c '
   elif .queue == "queued" then r("wait"; "queued")
   elif .queue == "removed" then r("stop"; "removed_from_queue")
   elif .changes_requested == true then r("wait"; "changes_requested")
-  elif (.checks // "pending") == "pending" then r("wait"; "checks_pending")
+  elif .checks == "pending" then r("wait"; "checks_pending")
   elif .checks == "fail" then r("wait"; "checks_failed")
-  elif (.unresolved_threads // 1) >= 1 then r("wait"; "unresolved_threads")
+  elif .unresolved_threads >= 1 then r("wait"; "unresolved_threads")
   elif .bot_approved != true then r("wait"; "no_bot_approval")
   elif .require_human_approval == true and .human_approved != true then r("wait"; "no_human_approval")
   else r("merge"; "ready") end' <<<"$input"
