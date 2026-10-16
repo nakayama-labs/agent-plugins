@@ -9,7 +9,7 @@
 #   enabled                  設定 auto.merge.enabled。true のときだけ merge になりうる（既定 false）。
 #                            allow_ai_merge は入力に入れない。それは手元で人が頼んだときの AI のマージの許可で、
 #                            無人のマージの許可とは別の設定にしたため（ADR 000411）
-#   require_human_approval   設定 auto.merge.require_human_approval（既定 false）
+#   require_human_approval   設定 auto.merge.require_human_approval（省略・null は true として扱う。人の approve が無ければ待つ側に倒す）
 #   state                    PR の状態。OPEN 以外は対象にしない
 #   fork                     フォークからの PR か（既定 true）
 #   task_auto_author         PR の作成者が task-auto の GitHub App の bot か（既定 false）
@@ -18,7 +18,7 @@
 #   queue                    none（キューに入っていない）・queued（入っている）・removed（今の head はキューから外れた）
 #   checks                   必須のチェック（lint-result・test-result）。pass・pending・fail（既定 pending）
 #   unresolved_threads       resolved でないレビューのスレッドの数。0 以上の整数（既定 1）
-#   changes_requested        最新の状態が changes requested のレビュアーがいるか（人も bot も。既定 false）
+#   changes_requested        最新の状態が changes requested のレビュアーがいるか（人も bot も。省略・null は true として扱う）
 #   bot_approved             coderabbitai[bot] か github-actions[bot] の approve が、最新の head に付いているか（既定 false）
 #   human_approved           write 以上の人の approve が、最新の head に付いているか（既定 false）
 #
@@ -35,7 +35,8 @@
 #   5. draft が false でない                             → skip（draft）
 #   6. no_auto_merge が true で、queue が queued         → dequeue（no_auto_merge）
 #   7. no_auto_merge が true                             → stop（no_auto_merge）
-#   8. queue が queued                                   → wait（queued）
+#   8. queue が queued                                   → wait（queued。changes_requested やチェックの失敗は見ない。キューの CI が決める。
+#                                                           キューから外すのは、6 の no_auto_merge のときだけ）
 #   9. queue が removed                                  → stop（removed_from_queue。その head は二度と入れない）
 #  10. changes_requested が true                         → wait（changes_requested）
 #  11. checks が pending                                 → wait（checks_pending）、fail → wait（checks_failed）
@@ -76,7 +77,10 @@ jq -e '
 # 既定の値は、検証の後に、ここで1か所に置く（検証は null か許可値だけを通すので、false などが既定の値に化けることは無い）
 jq -c '
   def r($a; $why): {action: $a, reason: $why};
-  (.queue //= "none" | .checks //= "pending" | .unresolved_threads //= 1)
+  # false は // で既定の値に化けるので、真偽値の既定は null かどうかで置く
+  (.queue //= "none" | .checks //= "pending" | .unresolved_threads //= 1
+   | (if .changes_requested == null then .changes_requested = true else . end)
+   | (if .require_human_approval == null then .require_human_approval = true else . end))
   | if .enabled != true then r("skip"; "disabled")
   elif .state != "OPEN" then r("skip"; "not_open")
   elif .fork != false then r("skip"; "fork")

@@ -143,3 +143,20 @@ check() {
   run_script merge-decide.sh --nope
   assert_failure 64
 }
+
+@test "changes_requested と require_human_approval の省略・null は、merge にならない側（true）で扱う" {
+  check 'del(.changes_requested)' "wait changes_requested"
+  check '.changes_requested = null' "wait changes_requested"
+  # require_human_approval が省略・null なら、人の approve が無ければ待つ。あれば merge
+  check 'del(.require_human_approval)' "wait no_human_approval"
+  check '.require_human_approval = null' "wait no_human_approval"
+  check 'del(.require_human_approval) | .human_approved = true' "merge ready"
+  # 明示した false は、そのまま false
+  check '.changes_requested = false | .require_human_approval = false' "merge ready"
+}
+
+@test "表 8：queued は changes_requested やチェックの失敗を見ず wait queued（外すのは no_auto_merge のときだけ）" {
+  check '.queue = "queued" | .changes_requested = true' "wait queued"
+  check '.queue = "queued" | .checks = "fail"' "wait queued"
+  check '.queue = "queued" | .unresolved_threads = 3 | .bot_approved = false' "wait queued"
+}
