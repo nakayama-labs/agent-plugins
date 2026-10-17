@@ -507,13 +507,15 @@ has() {
   f="$SKILLS/gh-pr-check/SKILL.md"
   un="$(section "$f" "## 無人で対応するとき")"
   has "「## 無人で対応するとき」の節" "$un" 'AskUserQuestion は使わない' '強制 push をしない' '--force-with-lease' 'マージはしない' 'キューに入れ直さない' \
-    '信用できない入力' '`repair.allowed_authors`' 'write 以上' 'collaborators/<ログイン名>/permission' '許可していない投稿者' '返信もせず' \
+    '信用できない入力' 'repair-author.sh --login <ログイン名>' '`allow`' '`deny`' '判断を自分でしない' '返信もせず' \
     '`pr-watch.sh`' '`action` が `act` でなければ' 'repair-push-check.sh --base-branch' '<!-- dev-workflow:repair-run head=<head の sha> -->' \
     '<!-- dev-workflow:repair-reply to=<返信先のコメントの ID> -->' '通常の `git push origin' '`checks_unconfirmed`' '`repair.max_fix_attempts`'
   # 直さない指摘は理由を返信し、スレッドは開いたままにする。resolved にする操作は呼ばない
   has "直さない指摘" "$un" '直さない指摘は、理由を返信し、スレッドは開いたままにする' '`resolveReviewThread` を呼ばない'
   has "止まる" "$(sed -n '/^### 止まる$/,$p' <<<"$un")" 'auto-hold.sh --issue <PR が閉じる Issue の番号> --run-id <指示役が渡した実行の id> --reason-file <ファイル> --repair-reason <理由の種類>' \
     '`same_failure`' '`forbidden_paths`' '`checks_unconfirmed`' '`other`' '本文には、理由の種類のマーカーを書かない'
+  # 許可の規則（設定・権限・404）はスクリプトに置き、SKILL.md には書き写さない
+  ! grep -q 'collaborators/' <<<"$un" || fail "無人の節に、権限の API の規則が書き写されています"
   # 手順の途中で、ユーザーに選んでもらう・承認を得る場面は、無人では使わない
   has "決まり" "$un" '手順4' '手順6' '指示役の判断に置き換える'
   frontmatter "$f" | grep -q '無人で対応する' || fail "gh-pr-check の description に、無人で対応する使い方がありません"
