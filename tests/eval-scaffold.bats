@@ -392,3 +392,36 @@ grader_matches() {
   printf 'issue edit 8 --add-assignee @me\n' >"$TMP/w2"
   grader_matches "$c" no-next-start "$TMP/w2" || fail "no-next-start が次の Issue への着手に当たりません"
 }
+
+@test "task-auto-sequence の正常系のケースの準備の後、後片付け・次の Issue の選択・着手のスクリプトが偽の gh で進み、grader に当たる" {
+  local c=task-auto-sequence-proceeds-to-next
+  run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
+  assert_success
+  run_script chain-record.sh --first 5 --chain-id c1
+  assert_success
+  assert_equal "$(jq -c '[.issues, .count]' <<<"$output")" '[[5,7],2]'
+  # 次の Issue の選択：Todo の先頭は #8 で、task-auto で進められる
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(jq -c .next <<<"$output")" 8
+  run_script auto-check.sh --issue 8
+  assert_success
+  assert_equal "$(jq -r .action <<<"$output")" proceed
+  run_script chain-decide.sh <<<'{"chain_enabled":true,"auto_enabled":true,"merge_enabled":true,"max":3,"wait_minutes":120,"record_readable":true,"count":2,"pr_state":"MERGED","no_auto_merge":false,"waited_minutes":0,"next_decided":true,"next":8,"next_action":"proceed"}'
+  assert_success
+  assert_equal "$(jq -c '[.action, .cleanup]' <<<"$output")" '["next",true]'
+  # マージ済みの PR のブランチの後片付けが通る
+  run_script cleanup.sh --branch feat/7-add-greet
+  assert_success
+  assert_equal "$(jq -c '.issues | map(.number)' <<<"$output")" '[7]'
+  [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
+  # 記録してから着手した書き込みは grader に当たり、着手してから記録した書き込みには当たらない
+  printf 'issue comment 5 --body-file -\nproject item-edit --id IT8 --field-id F1 --single-select-option-id OP\npr create --title x\n' >"$TMP/w1"
+  grader_matches "$c" records-before-start "$TMP/w1" || fail "records-before-start に当たりません"
+  grader_matches "$c" opens-pr "$TMP/w1" || fail "opens-pr に当たりません"
+  grader_matches "$c" no-merge-or-close "$TMP/w1" && fail "no-merge-or-close に当たります"
+  printf 'project item-edit --id IT8 --field-id F1 --single-select-option-id OP\nissue comment 5 --body-file -\n' >"$TMP/w2"
+  grader_matches "$c" records-before-start "$TMP/w2" && fail "records-before-start が、着手の後の記録に当たります"
+  printf 'pr merge 30 --squash\n' >"$TMP/w3"
+  grader_matches "$c" no-merge-or-close "$TMP/w3" || fail "no-merge-or-close が pr merge に当たりません"
+}
