@@ -48,6 +48,51 @@ step_of() {
   done
 }
 
+@test "判定・保留のスクリプトとプラグインは、PR のブランチでなく、既定のブランチを trusted/ にチェックアウトしたものを使う" {
+  # 既定のブランチを trusted/ に取る（repair ジョブ。PR のブランチの後）
+  trusted_co="$(awk '/ref: \$\{\{ github.event.repository.default_branch \}\}/ { r = NR } /path: trusted/ { p = NR } END { print (p - r == 1 || r - p == 1) ? "ok" : "ng" }' "$WF")"
+  [ "$trusted_co" = ok ] || fail "既定のブランチを path: trusted にチェックアウトしていません"
+  first_pr="$(grep -n 'ref: ${{ matrix.item.branch }}' "$WF" | head -1 | cut -d: -f1)"
+  trusted_line="$(grep -n 'path: trusted' "$WF" | head -1 | cut -d: -f1)"
+  [ "$first_pr" -lt "$trusted_line" ] || fail "trusted/ のチェックアウトが、PR のブランチより前にあります（PR 側のチェックアウトが消します）"
+  grep -q "echo '/trusted/' >> .git/info/exclude" "$WF"
+  # Claude のプラグインは trusted/ のもの。作業ディレクトリ側のプラグインを読ませない
+  [ "$(grep -c -- '--plugin-dir ${{ github.workspace }}/trusted/plugins/dev-workflow' "$WF")" = 2 ]
+  if grep -E -- '--plugin-dir (plugins|\./plugins)' "$WF"; then fail "PR 側のプラグインを読み込んでいます"; fi
+  # Bash で許可するスクリプトのパスも trusted/ の下だけ
+  allowed="$(grep -A1 'ALLOWED_TOOLS: >-' "$WF")"
+  [[ "$allowed" == *'Bash(${{ github.workspace }}/trusted/plugins/dev-workflow/scripts/*)'* ]] || fail "許可するスクリプトのパスが trusted/ の下ではありません"
+  [[ "$allowed" != *'workspace }}/plugins/'* ]] || fail "PR 側のスクリプトの実行を許可しています"
+  # 判定し直す step と保留の step は、trusted/ の中で動かす
+  [[ "$(step_of 'PR の今の状態を判定し直す')" == *'working-directory: trusted'* ]]
+  [[ "$(step_of '上限に達したので')" == *'working-directory: trusted'* ]]
+}
+
+@test "判定し直す step は、信頼する側の pr-repair-select.sh --pr で決め直し、イベントの投稿者は渡さず、対象でなければ skip にする" {
+  w="$(step_of 'PR の今の状態を判定し直す' | grep -v '^ *#')"
+  [[ "$w" == *'.github/scripts/pr-repair-select.sh --pr "$PR_NUMBER"'* ]] || fail "pr-repair-select.sh --pr を使っていません"
+  [[ "$w" != *'--sender'* ]] || fail "判定し直しで投稿者を渡しています"
+  [[ "$w" == *'// "skip"'* ]] || fail "対象でないときの skip がありません"
+  [[ "$w" != *'pr-watch.sh'* ]] || fail "pr-watch.sh だけで決め直しています"
+  # skip のときは、後の step（act・conflict・stop だけが動く）が動かない
+  for a in act conflict stop; do grep -q "steps.watch.outputs.action == '$a'" "$WF" || fail "$a の step がありません"; done
+  if grep -q "action == 'skip'" "$WF"; then fail "skip で動く step があります"; fi
+}
+
+@test "ALLOWED_TOOLS は task-auto.yml の --allowedTools と同じ内容（スクリプトのパスだけ違う）で、双方のコメントに互いが書いてある" {
+  TA="$BATS_TEST_DIRNAME/../.github/workflows/task-auto.yml"
+  mine="$(grep -A1 'ALLOWED_TOOLS: >-' "$WF" | tail -1 | sed -e 's/^ *//' -e 's#/trusted/plugins#/plugins#')"
+  theirs="$(grep -- '--allowedTools "' "$TA" | sed -e 's/.*--allowedTools "//' -e 's/"$//')"
+  [ -n "$mine" ] && [ "$mine" = "$theirs" ] || fail "ALLOWED_TOOLS が task-auto.yml と違います: $mine / $theirs"
+  grep -q 'task-auto.yml の --allowedTools と同じ内容' "$WF"
+  grep -q 'pr-repair.yml の ALLOWED_TOOLS と同じ内容' "$TA"
+}
+
+@test "見回りの設定（config.local.json）は、スクリプトで書く（find と repair の jq の重複をなくす）" {
+  [ "$(grep -c 'pr-repair-config.sh' "$WF")" -ge 3 ]
+  if grep -q "jq -n --arg app" "$WF"; then fail "ワークフローに設定を書く jq が残っています"; fi
+}
+
 @test "Claude を動かす step は、判定し直した action が act か conflict のときだけ。stop のときは Claude を動かさず、保留の列に移して止まる" {
   act="$(step_of 'gh-pr-check')"
   [[ "$act" == *"if: steps.watch.outputs.action == 'act'"* ]] || fail "gh-pr-check の step の条件が act だけではありません"
@@ -78,12 +123,11 @@ step_of() {
 
 @test "push の認証は App のトークンで通し、チェックアウトにトークンを残さない" {
   grep -q 'gh auth setup-git' "$WF"
-  [ "$(grep -c 'persist-credentials: false' "$WF")" = 2 ]
+  [ "$(grep -c 'persist-credentials: false' "$WF")" = 3 ]
 }
 
 @test "この実行だけ個人の層（config.local.json）で見回りを有効にし、チームの設定には書かない" {
   grep -q 'config.local.json' "$WF"
-  grep -q 'enabled: true' "$WF"
   if grep -q '"repair"' "$BATS_TEST_DIRNAME/../.claude/dev-workflow/config.json"; then fail "チームの設定に repair があります"; fi
 }
 

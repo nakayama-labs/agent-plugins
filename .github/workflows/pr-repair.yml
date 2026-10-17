@@ -15,6 +15,10 @@ name: pr-repair
 #   （task-auto.yml と同じ App。docs/adr/000057-github-app-token-for-release.md）。App のログイン名は、設定 repair.* の作成者・返信の投稿者になる
 # - 強制 push・main への push・マージはしない。.github/ と .claude/ の変更が要るときは止まる（スキルの手順と repair-push-check.sh）
 #
+# - 信頼の境界：判定・保留のスクリプトと、Claude に読み込ませるプラグイン（スキル・フック・repair-push-check.sh）は、PR のブランチでなく、
+#   既定のブランチを別のディレクトリ（trusted/）にチェックアウトしたものを使う。PR のブランチのチェックアウト（作業ディレクトリ）は、
+#   Claude が編集・テストする作業用だけにする（PR の中身に、App のトークンで動くスクリプトを書き換えさせない）
+#
 # 必須のチェックにしない。設定の手順は CONTRIBUTING.md の「PR の指摘と CI の失敗を自動で直す」を参照。
 on:
   schedule:
@@ -58,12 +62,7 @@ jobs:
       - name: 見回りの設定を、この実行だけ個人の層で有効にする
         env:
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-        run: |
-          set -euo pipefail
-          # チームの設定（config.json）には書かない。手元のセッションで常に有効にならないよう、gitignore 済みの個人の層に書く
-          jq -n --arg app "${APP_SLUG}[bot]" --arg allowed "$ALLOWED_AUTHORS" \
-            '{repair: {enabled: true, allowed_authors: ($allowed | split(",")), bot_logins: [$app], reply_logins: [$app]}}' \
-            > .claude/dev-workflow/config.local.json
+        run: .github/scripts/pr-repair-config.sh .claude/dev-workflow/config.local.json
       - name: 直す対象の PR を選ぶ
         id: select
         env:
@@ -105,9 +104,11 @@ jobs:
       ISSUE_NUMBER: ${{ matrix.item.issue }}
       RUN_ID: pr-repair-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.item.pr }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      # 許可するツールは、リポジトリの編集・git・gh・テストの実行に絞る（AskUserQuestion は入れない。確認は指示役が代わりに決める）
+      # 許可するツールは、リポジトリの編集・git・gh・テストの実行に絞る（AskUserQuestion は入れない。確認は指示役が代わりに決める）。
+      # task-auto.yml の --allowedTools と同じ内容（スクリプトのパスだけ違う：こちらは信頼する側の trusted/ の下）。片方を変えたら、もう片方も変える
+      # （同じ内容かは tests/pr-repair-workflow.bats が確かめる）
       ALLOWED_TOOLS: >-
-        Read,Edit,Write,Glob,Grep,Skill,Agent,Task,SendMessage,Bash(git:*),Bash(gh:*),Bash(jq:*),Bash(bats:*),Bash(shellcheck:*),Bash(${{ github.workspace }}/plugins/dev-workflow/scripts/*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(find:*),Bash(sed:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(cp:*),Bash(mv:*),Bash(test:*),Bash(parallel:*),Bash(mkdir:*),Bash(mktemp:*),Bash(date:*),Bash(printf:*),Bash(echo:*)
+        Read,Edit,Write,Glob,Grep,Skill,Agent,Task,SendMessage,Bash(git:*),Bash(gh:*),Bash(jq:*),Bash(bats:*),Bash(shellcheck:*),Bash(${{ github.workspace }}/trusted/plugins/dev-workflow/scripts/*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(grep:*),Bash(find:*),Bash(sed:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(cp:*),Bash(mv:*),Bash(test:*),Bash(parallel:*),Bash(mkdir:*),Bash(mktemp:*),Bash(date:*),Bash(printf:*),Bash(echo:*)
     steps:
       - name: GitHub App token
         id: app-token
@@ -124,6 +125,16 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           # トークンを .git/config に残さない（Claude が cat などで読めてしまうため）。push の認証は次の「git の作者と認証」で通す
           persist-credentials: false
+      # 判定・保留のスクリプトとプラグインは、既定のブランチのもの（trusted/）を使う。PR のブランチの後にチェックアウトする
+      # （PR 側のチェックアウトが、先にあるディレクトリを消さないように）
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
+      - name: trusted/ を git の対象外にする
+        # Claude がコミットするときに、trusted/ を PR の変更に含めない
+        run: echo '/trusted/' >> .git/info/exclude
       - name: 道具を入れる
         # bats と GNU parallel は、リポジトリのテストを動かすのに要る。jq・gh・shellcheck はランナーに入っている
         run: sudo apt-get update -q && sudo apt-get install -y -q bats parallel
@@ -139,23 +150,28 @@ jobs:
           # git push も App のトークンで行う（PR で lint・test を起動するため）。gh が環境変数 GH_TOKEN から認証する
           gh auth setup-git
       - name: 見回りの設定を、この実行だけ個人の層で有効にする
+        # 信頼する側（判定・保留のスクリプトが読む）と、PR 側（Claude が動かすスキルのスクリプトが読む）の両方に書く
         env:
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
           set -euo pipefail
-          jq -n --arg app "${APP_SLUG}[bot]" --arg allowed "$ALLOWED_AUTHORS" \
-            '{repair: {enabled: true, allowed_authors: ($allowed | split(",")), bot_logins: [$app], reply_logins: [$app]}}' \
-            > .claude/dev-workflow/config.local.json
+          trusted/.github/scripts/pr-repair-config.sh trusted/.claude/dev-workflow/config.local.json
+          trusted/.github/scripts/pr-repair-config.sh .claude/dev-workflow/config.local.json
       - name: PR の今の状態を判定し直す
         id: watch
-        # 直列で待っている間に、前の実行が直していることがある。今の状態で、まだ対象か決め直す
+        # 直列で待っている間に、前の実行が直していることがある。find と同じ選別（信頼する側の pr-repair-select.sh）で、
+        # 開いている・下書きでない・自動で作った PR・Issue が保留の列に無い、を含めて決め直す（対象でなければ skip）。
+        # イベントの投稿者（--sender）は渡さない（投稿者の確認は find で済んでいる）
+        working-directory: trusted
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BOT_LOGINS: ${{ steps.app-token.outputs.app-slug }}[bot]
+          APP_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
         run: |
           set -euo pipefail
-          watch=$(plugins/dev-workflow/scripts/pr-watch.sh --pr "$PR_NUMBER")
-          action=$(jq -r '.action' <<<"$watch")
-          reasons=$(jq -r '.reasons | join(",")' <<<"$watch")
+          selected=$(.github/scripts/pr-repair-select.sh --pr "$PR_NUMBER")
+          action=$(jq -r '.[0].action // "skip"' <<<"$selected")
+          reasons=$(jq -r '.[0].reasons // [] | join(",")' <<<"$selected")
           echo "PR #${PR_NUMBER}: ${action} (${reasons})"
           {
             echo "action=$action"
@@ -163,6 +179,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - name: 上限に達したので、理由を Issue に書いて保留の列に移して止まる
         if: steps.watch.outputs.action == 'stop'
+        working-directory: trusted
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REASONS: ${{ steps.watch.outputs.reasons }}
@@ -200,10 +217,11 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.run-token.outputs.token }}
-          # プラグインのスキルとフック（guard-git など）は、チェックアウトした plugins/dev-workflow から読み込む
+          # プラグインのスキルとフック（guard-git など）は、信頼する側（既定のブランチ）の trusted/plugins/dev-workflow から読み込む。
+          # スキルが ${CLAUDE_PLUGIN_ROOT} で呼ぶスクリプトも、そこのもの（作業ディレクトリは PR のブランチ）
           claude_args: >-
             --max-turns 300
-            --plugin-dir plugins/dev-workflow
+            --plugin-dir ${{ github.workspace }}/trusted/plugins/dev-workflow
             --allowedTools "${{ env.ALLOWED_TOOLS }}"
           prompt: |
             /dev-workflow:gh-pr-check ${{ matrix.item.pr }}
@@ -225,7 +243,7 @@ jobs:
           github_token: ${{ steps.run-token.outputs.token }}
           claude_args: >-
             --max-turns 300
-            --plugin-dir plugins/dev-workflow
+            --plugin-dir ${{ github.workspace }}/trusted/plugins/dev-workflow
             --allowedTools "${{ env.ALLOWED_TOOLS }}"
           prompt: |
             /dev-workflow:branch-update ${{ matrix.item.pr }}
