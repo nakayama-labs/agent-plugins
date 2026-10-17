@@ -88,7 +88,8 @@ seq_of() { printf '%s\n' "$@" >"$SEQ"; }
 }
 
 @test "引数の誤りは 64 で止まる。--help は使い方を出す" {
-  for a in "--interval 0" "--interval x" "--max-count 0" "--max-minutes -1" "--max-count 3 --max-minutes 3" "--pr" "--nope"; do
+  for a in "--interval 0" "--interval x" "--max-count 0" "--max-minutes -1" "--max-count 3 --max-minutes 3" "--pr" "--nope" \
+    "--interval 86401" "--max-minutes 10081" "--interval 99999999999999999999" "--max-minutes 99999999999999999999"; do
     # shellcheck disable=SC2086
     loop $a
     assert_failure 64
@@ -96,4 +97,12 @@ seq_of() { printf '%s\n' "$@" >"$SEQ"; }
   loop --help
   assert_success
   assert_output --partial "使い方: pr-watch-loop.sh"
+}
+
+@test "--interval と --max-minutes は上限ちょうどなら受け付ける。--max-count は上限を置かない" {
+  seq_of '{"action":"idle","reasons":["nothing_to_do"]}'
+  loop --interval 86400 --max-minutes 10080
+  assert_success
+  loop --max-count 99999999
+  assert_success
 }

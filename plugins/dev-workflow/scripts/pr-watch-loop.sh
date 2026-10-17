@@ -5,9 +5,9 @@
 #
 # 使い方: pr-watch-loop.sh [--pr N] [--interval 秒] [--max-count 回数 | --max-minutes 分]
 #   --pr N            PR の番号（#N でもよい）。省略すると今のブランチの PR
-#   --interval 秒     問い合わせる間隔（既定 60。1 以上の整数）
+#   --interval 秒     問い合わせる間隔（既定 60。1 以上 86400 以下の整数）
 #   --max-count 回数  pr-watch.sh を呼ぶ回数の上限（1 以上の整数）
-#   --max-minutes 分  見回る時間の上限（既定 60。1 以上の整数。間隔の合計で数える）。--max-count とは同時に指定できない
+#   --max-minutes 分  見回る時間の上限（既定 60。1 以上 10080（7 日）以下の整数。間隔の合計で数える）。--max-count とは同時に指定できない
 #
 # 出力（JSON）: 最後の pr-watch.sh の出力（pr・action・reasons・respond・details）に、watch を足したもの。
 #   watch   ended_by（action：action が wait でなくなった／limit：上限に達した）・polls（pr-watch.sh を呼んだ回数）・
@@ -42,10 +42,17 @@ while [ $# -gt 0 ]; do
     *) dw_die "不明な引数です: $1" 64 ;;
   esac
 done
-positive() { [[ "$2" =~ ^[0-9]+$ ]] && [ "$2" -ge 1 ] || dw_die "$1 は 1 以上の整数にしてください: $2" 64; }
-positive --interval "$interval"
+# 1 以上の整数か。上限（第3引数）があれば、それ以下か（間隔と時間の積が bash の整数の範囲を超えないようにする。--max-count は比べるだけなので上限を置かない）
+positive() {
+  [[ "$2" =~ ^[0-9]+$ ]] && [ "$2" -ge 1 ] || dw_die "$1 は 1 以上の整数にしてください: $2" 64
+  if [ -n "${3:-}" ]; then
+    # 桁数で先に弾く（桁あふれする大きさの数を、数として比べない）
+    { [ "${#2}" -le 7 ] && [ "$2" -le "$3" ]; } || dw_die "$1 は $3 以下にしてください: $2" 64
+  fi
+}
+positive --interval "$interval" 86400
 [ -z "$max_count" ] || positive --max-count "$max_count"
-[ -z "$max_minutes" ] || positive --max-minutes "$max_minutes"
+[ -z "$max_minutes" ] || positive --max-minutes "$max_minutes" 10080
 { [ -z "$max_count" ] || [ -z "$max_minutes" ]; } || dw_die "--max-count と --max-minutes は同時に指定できません" 64
 [ -z "${DW_WAIT_SLEEP:-}" ] || [[ "$DW_WAIT_SLEEP" =~ ^[0-9]+$ ]] || dw_die "DW_WAIT_SLEEP は秒数（0 以上の整数）にしてください" 64
 [ -n "$max_count" ] || [ -n "$max_minutes" ] || max_minutes=60
