@@ -28,6 +28,7 @@ load test_helper
 # 偽の gh。
 # - gh pr view [番号] --json ...   $FIX/pr-view.json を返す
 # - gh api graphql                クエリに PrQueue があれば（common.sh の dw_merge_queue_state）$FIX/queue.json、PrWatch があれば $FIX/watch.json、無ければ（PrThreads）$FIX/PrThreads.json を返す
+# - gh api --paginate --slurp repos/.../issues/N/comments?... は $FIX/api-comments.json、.../pulls/N/commits?... は $FIX/api-commits.json を返す（無ければ失敗）
 # - それ以外（書き込みを含む）は、$CALLS に「WRITE <引数>」を記録して失敗する
 setup_fake_gh() {
   FIX="$TMP/fix"
@@ -49,6 +50,13 @@ case "$1 $2" in
     else
       echo "READ PrThreads" >>"$CALLS"; cat "$FIX/PrThreads.json"
     fi
+    ;;
+  "api --paginate")
+    case "$4" in
+      *"/comments?"*) echo "READ api-comments" >>"$CALLS"; cat "$FIX/api-comments.json" ;;
+      *"/commits?"*) echo "READ api-commits" >>"$CALLS"; cat "$FIX/api-commits.json" ;;
+      *) echo "WRITE $*" >>"$CALLS"; exit 1 ;;
+    esac
     ;;
   *) echo "WRITE $*" >>"$CALLS"; echo "gh: 想定外の呼び出し: $*" >&2; exit 1 ;;
 esac
@@ -504,4 +512,189 @@ expect_check() {
     "$FIX/pr-view.json" >"$TMP/v.json"
   mv "$TMP/v.json" "$FIX/pr-view.json"
   expect act '["unanswered_comments"]'
+}
+
+# --- #340: repair.*（ADR 000285・000340） ---
+
+# 設定 repair.* を書く。使い方: repair_cfg <repair のオブジェクト（JSON）>
+repair_cfg() {
+  jq -n --argjson r "$1" '{repair: $r}' >"$REPO/.claude/dev-workflow/config.json"
+}
+
+# PR のコメントの応答（api-comments.json）を作る。使い方: api_comments <[[投稿者, 本文, 時刻], ...]>
+api_comments() {
+  jq -c '[[to_entries[] | {id: (900 + .key), user: {login: .value[0]}, body: .value[1], created_at: .value[2]}]]' <<<"$1" >"$FIX/api-comments.json"
+  echo '[[]]' >"$FIX/api-commits.json"
+}
+
+failed_head() {
+  pr_view "{headRefOid: \"abcdef1\", statusCheckRollup: [{__typename: \"CheckRun\", name: \"t\", status: \"COMPLETED\", conclusion: \"FAILURE\"}]}"
+}
+
+run_marker() { printf '<!-- dev-workflow:repair-run head=%s --> 実行ログ' "$1"; }
+
+@test "stop: 今の head の repair-run が repair.max_fix_attempts 未満なら act、以上なら stop で same_failure（ci_failed を続ける）" {
+  setup_fake_gh
+  failed_head
+  repair_cfg '{"enabled": true, "reply_logins": ["app"], "max_fix_attempts": 2}'
+  api_comments "[[\"app[bot]\", \"$(run_marker abcdef1)\", \"2026-10-01T00:01:00Z\"]]"
+  expect act '["ci_failed"]'
+  api_comments "[[\"app[bot]\", \"$(run_marker abcdef1)\", \"2026-10-01T00:01:00Z\"], [\"app\", \"$(run_marker ABCDEF1)\", \"2026-10-01T00:02:00Z\"]]"
+  expect stop '["same_failure","ci_failed"]'
+  # 同じ head での試行が上限に達していても、respond は変わらない（gh-pr-check が一覧へ進む）
+  assert_equal "$(jq -r .respond <<<"$output")" true
+}
+
+@test "stop: head が進んだ repair-run の回数が repair.max_pushes_per_pr 以上なら stop で push_limit。ほかの指摘の理由も並べる" {
+  setup_fake_gh
+  failed_head
+  repair_cfg '{"enabled": true, "reply_logins": ["app"], "max_pushes_per_pr": 2}'
+  api_comments "[[\"app\", \"$(run_marker 1111111)\", \"2026-10-01T00:01:00Z\"]]"
+  expect act '["ci_failed"]'
+  api_comments "[[\"app\", \"$(run_marker 1111111)\", \"2026-10-01T00:01:00Z\"], [\"app\", \"$(run_marker 2222222)\", \"2026-10-01T00:02:00Z\"], [\"app\", \"$(run_marker 2222222)\", \"2026-10-01T00:03:00Z\"]]"
+  thread '[["alice","直してください"]]'
+  write_threads
+  expect stop '["push_limit","ci_failed","unresolved_threads"]'
+}
+
+@test "stop: 別の head の repair-run は、この head での試行に数えない" {
+  setup_fake_gh
+  failed_head
+  repair_cfg '{"enabled": true, "reply_logins": ["app"], "max_fix_attempts": 1, "max_pushes_per_pr": 5}'
+  api_comments "[[\"app\", \"$(run_marker 1111111)\", \"2026-10-01T00:01:00Z\"]]"
+  expect act '["ci_failed"]'
+}
+
+@test "stop: repair.reply_logins 以外の投稿者の repair-run と、再開の起点より前の repair-run は数えない" {
+  setup_fake_gh
+  failed_head
+  repair_cfg '{"enabled": true, "reply_logins": ["app"], "max_fix_attempts": 1, "allowed_authors": ["alice"]}'
+  api_comments "[[\"mallory\", \"$(run_marker abcdef1)\", \"2026-10-01T00:01:00Z\"]]"
+  expect act '["ci_failed"]'
+  # 許可した投稿者の新しいコメント（再開の起点）より前の repair-run は数えない
+  api_comments "[[\"app\", \"$(run_marker abcdef1)\", \"2026-10-01T00:01:00Z\"], [\"alice\", \"もう一度見てください\", \"2026-10-01T00:05:00Z\"]]"
+  expect act '["ci_failed"]'
+  # repair-done の後の repair-run だけ数える
+  api_comments "[[\"app\", \"$(run_marker abcdef1)\", \"2026-10-01T00:01:00Z\"], [\"app\", \"<!-- dev-workflow:repair-done sha=abcdef1 at=x -->\", \"2026-10-01T00:02:00Z\"], [\"app\", \"$(run_marker abcdef1)\", \"2026-10-01T00:03:00Z\"]]"
+  expect stop '["same_failure","ci_failed"]'
+}
+
+@test "stop: 人の push（committer が reply_logins でないコミット）の後の repair-run だけ数える" {
+  setup_fake_gh
+  failed_head
+  repair_cfg '{"enabled": true, "reply_logins": ["app"], "max_fix_attempts": 1}'
+  api_comments "[[\"app\", \"$(run_marker abcdef1)\", \"2026-10-01T00:01:00Z\"]]"
+  echo '[[{"sha": "abcdef1", "parents": [], "committer": {"login": "alice"}, "commit": {"committer": {"date": "2026-10-01T00:05:00Z"}}}]]' >"$FIX/api-commits.json"
+  expect act '["ci_failed"]'
+}
+
+@test "stop: ci_failed が無ければ、repair-run が上限を超えていても stop にしない" {
+  setup_fake_gh
+  pr_view '{headRefOid: "abcdef1"}'
+  repair_cfg '{"enabled": true, "reply_logins": ["app"], "max_fix_attempts": 1}'
+  api_comments "[[\"app\", \"$(run_marker abcdef1)\", \"2026-10-01T00:01:00Z\"]]"
+  thread '[["alice","直してください"]]'
+  write_threads
+  expect act '["unresolved_threads"]'
+}
+
+@test "stop: repair.enabled が false か reply_logins が空か、コメントを読めないときは、数えずに act" {
+  setup_fake_gh
+  failed_head
+  api_comments "[[\"app\", \"$(run_marker abcdef1)\", \"2026-10-01T00:01:00Z\"]]"
+  repair_cfg '{"enabled": false, "reply_logins": ["app"], "max_fix_attempts": 1}'
+  expect act '["ci_failed"]'
+  repair_cfg '{"enabled": true, "reply_logins": [], "max_fix_attempts": 1}'
+  expect act '["ci_failed"]'
+  repair_cfg '{"enabled": true, "reply_logins": ["app"], "max_fix_attempts": 1}'
+  rm "$FIX/api-comments.json"
+  expect act '["ci_failed"]'
+}
+
+@test "対応済み: repair.reply_logins の返信（マーカーの to が一致し、後の時刻）は、スレッド・レビュー・PR のコメントを対応が要る指摘に数えない" {
+  setup_fake_gh
+  repair_cfg '{"reply_logins": ["app"]}'
+  # スレッド（先頭のコメントの ID は 100）。持ち主 alice の最後のコメント（101）への返信
+  thread '[["alice","直してください"],["alice","もう1つ"],["app","<!-- dev-workflow:repair-reply to=100 -->\n直しました"]]'
+  write_threads
+  expect act '["unresolved_threads"]'
+  thread '[["alice","直してください"],["alice","もう1つ"],["app","<!-- dev-workflow:repair-reply to=101 -->\n直しました"]]'
+  write_threads
+  expect idle '["nothing_to_do"]'
+  # マーカーだけで、投稿者が reply_logins でなければ対応済みにしない
+  thread '[["alice","直してください"],["mallory","<!-- dev-workflow:repair-reply to=100 -->\n直しました"]]'
+  write_threads
+  expect act '["unresolved_threads"]'
+  # PR のコメントとレビュー本文
+  pr_view '{comments: [{id: "C1", author: {login: "bob"}, body: "質問です", createdAt: "2026-10-01T00:01:00Z"},
+    {id: "C2", author: {login: "app"}, body: "<!-- dev-workflow:repair-reply to=C1 -->\n答えです", createdAt: "2026-10-01T00:02:00Z"}],
+    reviews: [{id: "R1", author: {login: "bob"}, state: "COMMENTED", body: "指摘", submittedAt: "2026-10-01T00:01:00Z"}]}'
+  write_threads
+  expect act '["unanswered_reviews"]'
+  pr_view '{comments: [{id: "C1", author: {login: "bob"}, body: "質問です", createdAt: "2026-10-01T00:01:00Z"},
+    {id: "C2", author: {login: "app"}, body: "<!-- dev-workflow:repair-reply to=C9 -->\n別の指摘への返信", createdAt: "2026-10-01T00:02:00Z"}]}'
+  expect act '["unanswered_comments"]'
+}
+
+@test "レビュー待ち: レート制限を知らせるコメントは到着に数えない" {
+  setup_fake_gh
+  echo '{"pr_check": {"handlers": {"rev[bot]": "rev-respond"}}}' >"$REPO/.claude/dev-workflow/config.json"
+  pr_view "{comments: [{id: \"C1\", author: {login: \"rev\"}, body: \"<!-- This is an auto-generated comment: rate limited by rev.ai -->\\n上限です\", createdAt: \"2026-10-01T00:02:00Z\"}, {id: \"C2\", author: {login: \"me\"}, body: \"確認しました\", createdAt: \"2026-10-01T00:03:00Z\"}], statusCheckRollup: [$(check_ok)]}"
+  expect wait '["awaiting_review:rev[bot]","awaiting_replies"]'
+  # 上限以外のコメントは到着
+  pr_view "{comments: [{id: \"C1\", author: {login: \"rev\"}, body: \"指摘なし\", createdAt: \"2026-10-01T00:02:00Z\"}, {id: \"C2\", author: {login: \"me\"}, body: \"確認しました\", createdAt: \"2026-10-01T00:03:00Z\"}], statusCheckRollup: [$(check_ok)]}"
+  run_script pr-watch.sh --pr 5
+  assert_success
+  assert_equal "$(jq -c .reasons <<<"$output")" '["nothing_to_do","awaiting_replies"]'
+}
+
+@test "レビュー待ち: repair.wait_for_reviewers の投稿者も待つ。待つ時間は repair.review_wait_minutes" {
+  setup_fake_gh
+  repair_cfg '{"wait_for_reviewers": ["rev"], "review_wait_minutes": 5}'
+  pr_view "{statusCheckRollup: [$(check_ok)]}"
+  # 作ってから 10 分たっていて、5 分の上限を過ぎている
+  expect idle '["nothing_to_do"]'
+  repair_cfg '{"wait_for_reviewers": ["rev"], "review_wait_minutes": 15}'
+  expect wait '["awaiting_review:rev"]'
+}
+
+@test "レビュー待ち: 無人の push の後は、その push より後に今の head へ付く増分のレビューも待つ" {
+  setup_fake_gh
+  repair_cfg '{"enabled": true, "reply_logins": ["app"], "wait_for_reviewers": ["rev"], "review_wait_minutes": 60}'
+  pr_view "{headRefOid: \"abcdef1\", statusCheckRollup: [$(check_ok)]}"
+  api_comments '[]'
+  # 00:08 に無人の実行が push して head になった。最初のレビューは 00:03（古い head）
+  echo '[[{"sha": "abcdef1", "parents": [], "committer": {"login": "app[bot]"}, "commit": {"committer": {"date": "2026-10-01T00:08:00Z"}}}]]' >"$FIX/api-commits.json"
+  watch '{reviews: {nodes: [{author: {login: "rev"}, submittedAt: "2026-10-01T00:03:00Z", commit: {oid: "0000000"}}]}}'
+  expect wait '["awaiting_review:rev"]'
+  # push の後でも、古い head へのレビューは到着に数えない
+  watch '{reviews: {nodes: [{author: {login: "rev"}, submittedAt: "2026-10-01T00:09:00Z", commit: {oid: "0000000"}}]}}'
+  expect wait '["awaiting_review:rev"]'
+  # push の後に、今の head へ付いたら待たない
+  watch '{reviews: {nodes: [{author: {login: "rev"}, submittedAt: "2026-10-01T00:09:00Z", commit: {oid: "abcdef1"}}]}}'
+  expect idle '["nothing_to_do"]'
+  # 待つ時間は push の時刻から数える（00:08 から 60 分）
+  watch '{}'
+  PR_WATCH_NOW=1790816879 expect wait '["awaiting_review:rev"]'
+  PR_WATCH_NOW=1790816880 expect idle '["nothing_to_do"]'
+}
+
+@test "repair.enabled が true でも、何も書き込まない" {
+  setup_fake_gh
+  failed_head
+  repair_cfg '{"enabled": true, "reply_logins": ["app"]}'
+  api_comments '[]'
+  run_script pr-watch.sh --pr 5
+  assert_success
+  run grep -c '^WRITE ' "$CALLS"
+  assert_output 0
+  run grep -c '^READ api-' "$CALLS"
+  assert_output 2
+}
+
+@test "action が stop になる値は、--help の表に書いてある" {
+  run_script pr-watch.sh --help
+  assert_output --partial "stop"
+  assert_output --partial "same_failure"
+  assert_output --partial "push_limit"
 }

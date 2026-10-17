@@ -165,7 +165,7 @@ printf '%s\n' "$view" "$threads" "$edits" | jq -s --argjson handlers "$handlers"
       | ([.comments | to_entries[] | select(.value.author | norm == $me) | .key] | last // -1) as $me_at
       | ($me_at > $by_at) as $replied
       | {author: $by.author, item: {id: .comments[0].id, path, line, outdated, url: .comments[0].url,
-          comments: [.comments[] | del(.id)], replied: $replied, needs_attention: ($replied | not)}}] as $t
+          comments: .comments, replied: $replied, needs_attention: ($replied | not)}}] as $t
   # PR の作者の PR のコメントの、最後の時刻（無ければ ""）。レビュー本文・PR のコメントは、この時刻以前に作られ、
   # この時刻より後に編集されていなければ、返事済みとする。時刻が null のものは返事済みにしない
   | ([($v.comments // [])[] | select((login | norm) == $me) | .createdAt] | max // "") as $last_own
