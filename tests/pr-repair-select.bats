@@ -300,3 +300,20 @@ SH
   assert_output '[]'
   [ "$(grep -c '/permission' "$CALLS")" = 1 ]
 }
+
+@test "ログイン名の形でない投稿者（repair-author.sh が終了コード 64）は、許可しない扱いにして続け、見回り全体を止めない" {
+  pull 1; pull 2
+  watch 1 act '["unanswered_comments"]'; fb 1 'bad/name' 1
+  watch 2 act '["unanswered_comments"]'; fb 2 'review-bot[bot]' 1
+  run_sel
+  assert_success
+  [ "$(jq -c '[.[].pr]' <<<"$output")" = '[2]' ]
+  not_called 'bad/name'
+}
+
+@test "イベントの投稿者がログイン名の形でないときも、許可しない扱いで何も選ばず、失敗にしない" {
+  pull 1; watch 1 act '["ci_failed"]'
+  run_sel --pr 1 --sender 'a/b'
+  assert_success
+  assert_output '[]'
+}
