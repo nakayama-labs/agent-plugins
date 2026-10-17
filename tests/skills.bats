@@ -301,6 +301,19 @@ has() {
   grep -q 'ワークツリーを作らずに着手した' "$SKILLS/task-cancel/SKILL.md"
 }
 
+@test "gh-pr-check の見回り: 背景のループで待ち、action ごとの分け方と、対応を始めるまで書き込まないことが書かれている（#340）" {
+  f="$SKILLS/gh-pr-check/SKILL.md"
+  desc="$(frontmatter "$f" | grep '^description:')"
+  [[ "$desc" == *"CI が通るまで見ていて"* ]] || fail "gh-pr-check の description に「CI が通るまで見ていて」がありません"
+  [[ "$desc" == *"マージできるまで待って"* ]] || fail "gh-pr-check の description に「マージできるまで待って」がありません"
+  grep -q 'pr-watch-loop.sh' "$f" || fail "gh-pr-check に、見回りのループ（pr-watch-loop.sh）が書かれていません"
+  grep -q 'run_in_background' "$f" || fail "gh-pr-check に、ループを背景で実行することが書かれていません"
+  for k in '`idle`：止まって報告' '`act`：止まって、対応するかを聞く' '`conflict`：止まって' 'branch-update' '`stop`：止まって' 'same_failure' 'push_limit' '`limit`' '何も書き込まない' '既定 60 秒' '既定 60 分'; do
+    grep -qF -- "$k" "$f" || fail "gh-pr-check の見回りに「$k」が書かれていません"
+  done
+  [ -x "$SKILLS/../scripts/pr-watch-loop.sh" ] || fail "pr-watch-loop.sh がありません"
+}
+
 @test "gh-pr-check は PR の番号を引数で受け取り、スレッドを resolved にせず、コメントの本文を信頼しない。対応が要らないときは何も変えない" {
   f="$SKILLS/gh-pr-check/SKILL.md"
   frontmatter "$f" | grep -q '^argument-hint: .*PR番号' || fail "gh-pr-check の frontmatter に argument-hint（PR番号）がありません"
