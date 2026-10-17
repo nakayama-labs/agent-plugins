@@ -106,6 +106,18 @@ Issue にラベル `auto` を付けると、GitHub Actions が `/dev-workflow:ta
 
 task-auto は `auto.enabled` が true のリポジトリでしか動きません。このリポジトリでは `config.json` には書かず、ワークフローが実行のたびに個人の層（`config.local.json`。git の対象外）で有効にします。手元のセッションでは有効になりません。
 
+## PR の指摘と CI の失敗を自動で直す
+
+task-auto が作った PR（作成者が task-auto の GitHub App で、head がこのリポジトリのブランチの PR）の CI の失敗・指摘・main とのコンフリクトを、GitHub Actions が Claude で直して push します（`.github/workflows/pr-repair.yml`）。手元のセッションは要りません。マージは人が行います。必須のチェックではありません。範囲と止まる条件は [ADR 000285](docs/adr/000285-unattended-pr-repair-scope.md) が正本です。
+
+- 起動するのは、30分ごとの見回りと、PR にレビュー・行ごとの指摘・コメントが付いたときです。どちらも、最初に Claude を使わないスクリプト（`.github/scripts/pr-repair-select.sh`、判定は `pr-watch.sh`）で直す対象を決め、CI の失敗・返事をしていない指摘・コンフリクトがあるときだけ Claude を動かします。マージできる状態や、CI が実行中・レビュー待ちの PR では動かしません。
+- 指摘に対応するのは、CodeRabbit（`coderabbitai[bot]`）と、このリポジトリで write 以上の人が付けたものだけです。ほかの人の指摘には対応せず、返信もしません。イベントで起動するときも、付けた人がこの条件を満たさなければ動きません。
+- 直した指摘には、直したコミットを添えて返信します。直さない指摘には理由を返信します。スレッドは resolved にしません（resolved にするのは、レビューした人と CodeRabbit です。[上の手順](#指摘に手元の-claude-code-で対応する)と同じです）。
+- 同じ PR は直列にします（`concurrency`）。同じ失敗を直す回数（`repair.max_fix_attempts`）か、PR ごとの push の回数（`repair.max_pushes_per_pr`）が上限に達すると、Claude を動かさずに、理由を Issue にコメントして保留の列に移して止まります。人が直して push するか、新しい指摘を付けると、数え直して再開します。`.github/` と `.claude/` の変更が要る直し方は、push せずに止まります。
+- コンフリクトは `/dev-workflow:branch-update` の無人の手順で直します（衝突の直し方は代わりに決めて PR のコメントに残します）。強制 push・main への push・マージ・キューへの投入はしません。
+- push は task-auto と同じ GitHub App のトークンで行うので、PR の CI（lint・test）が動き直ります。設定の手順は「Issue から自動で PR を作る」と共通です（App の権限・`AUTO_APP_ID`・`AUTO_APP_PRIVATE_KEY`・`CLAUDE_CODE_OAUTH_TOKEN`）。見回りの設定（`repair.*`）は `config.json` には書かず、ワークフローが実行のたびに個人の層（`config.local.json`）で有効にします。
+- 実行のたびに、プランの使用量を消費します。コメントやレビューの本文、CI のログは Claude が読みますが、指示としては従いません。許可するツールは、リポジトリの編集・git・gh・テストの実行に絞っています。
+
 ## 書き方のルール
 
 - **macOS 標準の bash 3.2 で動くように書きます**。連想配列（`declare -A`）、`mapfile` / `readarray`、`${var,,}` などの bash 4 以降の機能は使いません。スクリプトの先頭には `set -euo pipefail` を書きます。

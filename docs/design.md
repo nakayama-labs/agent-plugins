@@ -306,6 +306,17 @@ PR の見回りで `pr-watch.sh` が `conflict` を返した PR を、承認な�
 - **止まる**：取り込みの途中なら取り込む前に戻し（`git merge --abort`）、衝突の内容・それまでの判断・残したもの・続けるには何をするかを Issue にコメントして保留の列に移す（`auto-hold.sh --repair-reason <理由の種類>`。`auto-hold.sh` が実行の印の次の行にマーカー `<!-- dev-workflow:repair-stopped reason=<理由の種類> -->` を足す）。理由の種類は、`repair-next.sh` の `stop` の `reason`（`repair-next.sh --stop-reasons` の一覧。`dirty`・`same_failure`・`forbidden_paths` など）をそのまま使い、表の外で止まるときは `other` にする。見回りが push の上限で止めるときは `push_limit` を使う（`repair-next.sh` は返さないので、一覧には入れない）。見回りは、この印で止まった理由を見分ける（ADR 000339）。push はしない。PR が閉じる Issue が1つに決まらないときは、書き込まずに理由を返すだけにする。
 
 
+### PR の指摘と CI の失敗を無人で直す（gh-pr-check の無人の手順と、見回りのワークフロー）
+
+`pr-watch.sh` が `act` を返した PR の、CI の失敗と許可した投稿者の指摘を、承認なしで直す（#341、[ADR 000285](adr/000285-unattended-pr-repair-scope.md)）。`branch-update` と同じく、別のスキルにはせず、`gh-pr-check` の SKILL.md に「無人で対応するとき」の節を足した。指示役が「無人で対応する」と指定したときだけ使い、指定が無ければ、今までどおりユーザーの承認を取る。
+
+- **置き換える場面**：ユーザーに直すものを選んでもらう（手順4）と、push と返信の承認を得る（手順6）を、指示役の判断に置き換える。ほかの手順は変えない。
+- **許可した投稿者**：設定 `repair.allowed_authors` の投稿者と、リポジトリで write 以上の人。ほかの人の指摘は、直さず、返信もしない。
+- **返信**：本文の先頭にマーカー `<!-- dev-workflow:repair-reply to=<コメントの ID> -->` を付ける。`pr-watch.sh` がこれを対応済みとして数える。直さない指摘は理由を返信し、スレッドは resolved にしない。
+- **ワークフロー**（`.github/workflows/pr-repair.yml`。このリポジトリ専用）：定期（30分ごと）と、PR への指摘のイベントで起動する。最初に Claude を使わない `.github/scripts/pr-repair-select.sh` が、自動で作った PR（作成者が task-auto の App、head が同じリポジトリ、下書きでない、閉じる Issue が1つで保留の列に無い）の `pr-watch.sh` を見て、`act`・`conflict`・`stop` のものを選ぶ。`act` は `gh-pr-check`、`conflict` は `branch-update` を無人で動かす。`stop` は Claude を動かさず、`auto-hold.sh` で Issue にコメントして保留の列に移す。PR ごとに `concurrency`（`cancel-in-progress: false`）で直列にし、順番を待っている間に状況が変わっていることがあるので、動かす直前に `pr-watch.sh` で判定し直す。
+- **自動で作った PR の見分け方**：作成者が App のログイン名であることと、head がこのリポジトリのブランチであることで見分ける。本文のマーカーは、書き換えられるので使わない。
+
+
 ### PR の指摘・質問への対応（gh-pr-check）
 
 PR を出した後のコメント・指摘・質問・CI の失敗を確かめ、返信や修正を行う。どのリポジトリでも起きる流れなので、プラグインに同梱する。PR を出した後の任意の寄り道で、`pr-create` と `task-finish` は `gh-pr-check` に依存しない（使わなくても、マージから後片付けまで進められる）。
