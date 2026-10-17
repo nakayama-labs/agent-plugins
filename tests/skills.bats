@@ -1139,3 +1139,32 @@ has() {
   grep -qF '`adr-create.sh --accept <ADR>`' "$BATS_TEST_DIRNAME/../docs/design.md" || fail "設計書に、--accept がありません"
   grep -qF '`adr-create.sh --accept`' "$BATS_TEST_DIRNAME/../plugins/dev-workflow/templates/adr/README.md" || fail "テンプレートの README に、--accept がありません"
 }
+
+# shellcheck disable=SC2016,SC2013 # バッククォートはスキルの本文の文字で、展開させない。スクリプト名に空白は無い
+@test "task-auto-sequence は、後片付け・次の Issue の選択・task-auto をつなぎ、確認を取らずに、上限と止める手段で止まる（ADR 000411）" {
+  f="$SKILLS/task-auto-sequence/SKILL.md"
+  has "task-auto-sequence" "$(cat "$f")" 'AskUserQuestion は使わない' 'PR のマージ・キューへの投入・Issue を閉じること・親の Issue を閉じること・強制 push はしない' \
+    '`chain-decide.sh`' '`chain-record.sh`' '`next-tasks.sh`' '`auto-check.sh`' '`cleanup.sh`'
+  # 無効なら何もしない（設定が3つとも要る）
+  has "task-auto-sequence の description" "$(frontmatter "$f")" 'auto.enabled・auto.merge.enabled・auto.chain.enabled'
+  has "止まる" "$(section "$f" '## 止まる')" '`chain_disabled`・`auto_disabled`・`merge_disabled`' '何も書き込まずに' 'gh pr comment <PR番号>' '自動では再開しない'
+  has "確認の代わりに決めること" "$(section "$f" '## 確認の代わりに決めること')" 'git が無視するファイルを消してよいか' '消さずに止まる' '子がすべて閉じた親を閉じるか' '閉じない'
+  has "task-auto-sequence の手順1" "$(step "$f" 1)" 'フォークからの PR' '新しい連鎖を始める' '連鎖の id'
+  has "task-auto-sequence の手順2" "$(step "$f" 2)" 'auto.chain.max' 'auto.chain.wait_minutes' 'chain-record.sh --first' 'no-auto-merge'
+  has "task-auto-sequence の手順3" "$(step "$f" 3)" 'chain-decide.sh' '`wait`' '`no_next`' '`next` と `next_action`' 'next-tasks.sh' 'auto-check.sh --issue'
+  has "task-auto-sequence の手順4" "$(step "$f" 4)" 'PR が MERGED のときだけ' 'cleanup.sh --branch' 'task-finish の手順2-1は行わない' '子がすべて閉じた親は閉じず'
+  has "task-auto-sequence の手順5" "$(step "$f" 5)" '--add <最初の Issue>' '--add <次の Issue>' '進めずに「止まる」で止まる' '`/dev-workflow:task-auto`' '連鎖も終える'
+  has "task-auto-sequence の手順6" "$(step "$f" 6)" '--first <最初の Issue> --chain-id <連鎖の id>' '自動では再開しない'
+  # 次の Issue に進む前に記録する（手順5の記録は、task-auto を動かす前）
+  rec="$(grep -n 'chain-record.sh --first <最初の Issue> --chain-id <連鎖の id> --add <次の Issue>' "$f" | head -n 1 | cut -d: -f1)"
+  run_auto="$(grep -n '2. `/dev-workflow:task-auto`' "$f" | head -n 1 | cut -d: -f1)"
+  [ -n "$rec" ] && [ -n "$run_auto" ] && [ "$rec" -lt "$run_auto" ] || fail "次の Issue の記録が、task-auto を動かす手順より前にありません"
+}
+
+# shellcheck disable=SC2016,SC2013 # バッククォートはスキルの本文の文字で、展開させない。スクリプト名に空白は無い
+@test "task-auto-sequence が使うスクリプトは、どれもリポジトリにある（スキルの参照が切れていない）" {
+  f="$SKILLS/task-auto-sequence/SKILL.md"
+  for s in $(grep -o '\${CLAUDE_PLUGIN_ROOT}/scripts/[a-z-]*[.]sh' "$f" | sed 's#.*/##' | sort -u); do
+    [ -x "$SKILL_SCRIPTS/$s" ] || fail "$s がありません（または実行できません）"
+  done
+}
