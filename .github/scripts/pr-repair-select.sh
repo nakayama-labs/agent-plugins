@@ -4,13 +4,12 @@
 # 使い方: pr-repair-select.sh [--pr N]... [--sender LOGIN]
 #   --pr N          この PR だけを調べる（何度も指定できる）。省略すると、開いている PR をすべて調べる
 #   --sender LOGIN  イベントで起動したときの、コメント・レビューの投稿者。許可した投稿者でなければ、何も選ばない
-#                   （許可：ALLOWED_AUTHORS の投稿者、またはリポジトリの write 以上の人。無人の実行そのもの APP_LOGIN は許可しない）
+#                   （許可は repair-author.sh が決める：設定 repair.allowed_authors の投稿者、またはリポジトリの write 以上の人。無人の実行そのもの APP_LOGIN は許可しない）
 #
 # 環境変数:
 #   GITHUB_REPOSITORY  <所有者>/<名前>（必須）
 #   BOT_LOGINS         自動で作った PR の作成者として認める GitHub App のログイン名（, 区切り。必須）
 #   APP_LOGIN          無人の実行を動かす GitHub App のログイン名（--sender がこれなら選ばない。ループを防ぐ）
-#   ALLOWED_AUTHORS    指摘に対応してよい投稿者（, 区切り。CodeRabbit など）
 #   SCRIPTS_DIR        plugins/dev-workflow/scripts の場所（既定：このファイルから見た場所）
 #
 # 「自動で作った PR」は、開いていて、下書きでなく、head がこのリポジトリのブランチ（フォークでない）で、作成者が BOT_LOGINS の
@@ -26,9 +25,12 @@ set -euo pipefail
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY が必要です}"
 : "${BOT_LOGINS:?BOT_LOGINS が必要です}"
 SCRIPTS_DIR="${SCRIPTS_DIR:-$(CDPATH='' cd "$(dirname "$0")/../../plugins/dev-workflow/scripts" && pwd)}"
+# shellcheck source=/dev/null # 場所は SCRIPTS_DIR で決まる
+. "$SCRIPTS_DIR/lib/common.sh"
 
-# ログイン名を比べる形にする（大文字小文字・先頭の app/・末尾の [bot] は区別しない。gh pr view と gh api で綴りが違うため）
-norm() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's#^app/##' -e 's#\[bot\]$##'; }
+# ログイン名を比べる形にする。規則は pr-watch.sh・pr-feedback.sh と同じ（DW_JQ_LOGIN_NORM：大文字小文字と末尾の [bot] を区別しない）。
+# ここで規則を書き直さず、同じ定義を使う。PR の作成者は REST（user.login。app[bot] の綴り）で読むので、gh pr view の綴りは扱わない
+norm() { jq -rn --arg l "$1" "$DW_JQ_LOGIN_NORM"'$l | norm'; }
 # , 区切りのログイン名の一覧に、ログイン名があるか
 in_list() {
   local want item
@@ -63,36 +65,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# 指摘に対応してよい投稿者か（ALLOWED_AUTHORS の投稿者、またはリポジトリの write 以上の人）。結果は覚えて、API を呼び直さない
-allowed_cache=""
+# 指摘に対応してよい投稿者か。判断は repair-author.sh（設定 repair.allowed_authors・write 以上の権限）に任せる。
+# 権限を読めないとき（404 以外の失敗）は、権限なしと取り違えず、ここも失敗にする（set -e で止まる）
 is_allowed() {
-  local login="$1" role err hit
-  if in_list "$login" "${ALLOWED_AUTHORS:-}"; then return 0; fi
-  hit="$(printf '%s' "$allowed_cache" | grep -F -x -e "yes $(norm "$login")" -e "no $(norm "$login")" || true)"
-  if [ -n "$hit" ]; then [ "${hit%% *}" = yes ]; return; fi
-  # role_name は admin・maintain・write・triage・read のどれか（permission は maintain を write と返すので使わない）。
-  # コラボレーターでない人は 404。それ以外の失敗（API の一時的なエラーなど）を none と取り違えないよう、失敗にする
-  err="$(mktemp)"
-  if ! role="$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${login}/permission" --jq '.role_name' 2>"$err")"; then
-    if grep -q 'HTTP 404' "$err"; then
-      role=none
-    else
-      cat "$err" >&2
-      rm -f "$err"
-      exit 1
-    fi
-  fi
-  rm -f "$err"
-  case "$role" in
-    admin | maintain | write)
-      allowed_cache="${allowed_cache}yes $(norm "$login")"$'\n'
-      return 0
-      ;;
-    *)
-      allowed_cache="${allowed_cache}no $(norm "$login")"$'\n'
-      return 1
-      ;;
-  esac
+  local out
+  out="$("$SCRIPTS_DIR/repair-author.sh" --login "$1" --repo "$GITHUB_REPOSITORY")" || exit 1
+  [ "$(jq -r .action <<<"$out")" = allow ]
 }
 
 if [ -n "$sender" ]; then

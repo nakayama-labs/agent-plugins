@@ -57,8 +57,7 @@ SH
   CALLS="$TMP/calls"; : >"$CALLS"
   export CALLS FIX TMP PATH="$TMP/bin:$PATH"
   export SCRIPTS_DIR="$TMP/plugin/scripts" GITHUB_REPOSITORY=me/demo BOT_LOGINS='task-app[bot]' APP_LOGIN='task-app[bot]'
-  export ALLOWED_AUTHORS='review-bot[bot]'
-  echo '{"status": {"hold": "On Hold"}}' >"$REPO/.claude/dev-workflow/config.json"
+  echo '{"status": {"hold": "On Hold"}, "repair": {"allowed_authors": ["review-bot[bot]"]}}' >"$REPO/.claude/dev-workflow/config.json"
   echo '[]' >"$FIX/open.json"
 }
 
@@ -113,8 +112,8 @@ fb() {
   not_called '^pr-watch'
 }
 
-@test "作成者のログイン名は、app/ の接頭辞・[bot] の有無・大文字小文字を区別せずに比べる" {
-  pull 1 'app/Task-App'; pull 2 'TASK-APP'
+@test "作成者のログイン名は、[bot] の有無・大文字小文字を区別せずに比べる（pr-watch.sh と同じ DW_JQ_LOGIN_NORM の規則）" {
+  pull 1 'Task-App[bot]'; pull 2 'TASK-APP'
   watch 1 act '["ci_failed"]'; watch 2 act '["ci_failed"]'
   run_sel
   assert_success
@@ -186,7 +185,7 @@ SH
   assert_output '[]'
 }
 
-@test "返事をしていない指摘が、許可した投稿者（ALLOWED_AUTHORS）のものなら選ぶ" {
+@test "返事をしていない指摘が、許可した投稿者（設定 repair.allowed_authors）のものなら選ぶ" {
   pull 1
   watch 1 act '["unanswered_comments"]'; fb 1 'review-bot[bot]' 1
   run_sel
@@ -242,7 +241,7 @@ SH
   not_called '^pr-watch'
 }
 
-@test "イベントの投稿者が、ALLOWED_AUTHORS か write 以上の人なら、その PR を調べる" {
+@test "イベントの投稿者が、repair.allowed_authors か write 以上の人なら、その PR を調べる" {
   pull 1; watch 1 act '["ci_failed"]'
   run_sel --pr 1 --sender 'review-bot[bot]'
   assert_success
@@ -265,4 +264,16 @@ SH
   [ "$status" -eq 64 ]
   run_sel --nope
   [ "$status" -eq 64 ]
+}
+
+@test "ログイン名を比べる規則は、DW_JQ_LOGIN_NORM（pr-watch.sh・pr-feedback.sh と同じ定義）を使い、スクリプトの中で書き直さない" {
+  grep -q 'DW_JQ_LOGIN_NORM' "$SEL"
+  if grep -v '^ *#' "$SEL" | grep -q "sub(.*bot\|\\[bot\\]"; then fail "select の中で、ログイン名の規則を書き直しています"; fi
+}
+
+@test "権限を読めない（404 以外）ときは、イベントの投稿者の確認でも、指摘の投稿者の確認でも、失敗にする" {
+  pull 1; watch 1 act '["unanswered_comments"]'; fb 1 flaky 1
+  touch "$FIX/perm-flaky.err"
+  run_sel
+  assert_failure
 }
