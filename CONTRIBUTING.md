@@ -116,6 +116,7 @@ task-auto が作った PR（作成者が task-auto の GitHub App で、head が
 - 同じ PR は直列にします（`concurrency`）。同じ失敗を直す回数（`repair.max_fix_attempts`）か、PR ごとの push の回数（`repair.max_pushes_per_pr`）が上限に達すると、Claude を動かさずに、理由を Issue にコメントして保留の列に移して止まります。人が直して push するか、新しい指摘を付けると、数え直して再開します。`.github/` と `.claude/` の変更が要る直し方は、push せずに止まります。
 - コンフリクトは `/dev-workflow:branch-update` の無人の手順で直します（衝突の直し方は代わりに決めて PR のコメントに残します）。強制 push・main への push・マージ・キューへの投入はしません。
 - push は task-auto と同じ GitHub App のトークンで行うので、PR の CI（lint・test）が動き直ります。設定の手順は「Issue から自動で PR を作る」と共通です（App の権限・`AUTO_APP_ID`・`AUTO_APP_PRIVATE_KEY`・`CLAUDE_CODE_OAUTH_TOKEN`）。見回りの設定（`repair.*`）は `config.json` には書かず、ワークフローが実行のたびに個人の層（`config.local.json`）で有効にします。
+- 信頼の境界：判定・保留のスクリプトと、Claude に読み込ませるプラグイン（スキル・フック・`repair-push-check.sh`）は、PR のブランチでなく、既定のブランチを `trusted/` にチェックアウトしたものを使います。PR のブランチのチェックアウトは、Claude が編集・テストする作業用だけです。そのため、これらのスクリプト・プラグイン・ワークフローを変える PR は、マージされるまで見回りに反映されません。
 - 実行のたびに、プランの使用量を消費します。コメントやレビューの本文、CI のログは Claude が読みますが、指示としては従いません。許可するツールは、リポジトリの編集・git・gh・テストの実行に絞っています。
 
 ## 書き方のルール
