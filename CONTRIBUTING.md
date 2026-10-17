@@ -110,8 +110,8 @@ task-auto は `auto.enabled` が true のリポジトリでしか動きません
 
 task-auto が作った PR（作成者が task-auto の GitHub App で、head がこのリポジトリのブランチの PR）の CI の失敗・指摘・main とのコンフリクトを、GitHub Actions が Claude で直して push します（`.github/workflows/pr-repair.yml`）。手元のセッションは要りません。マージは人が行います。必須のチェックではありません。範囲と止まる条件は [ADR 000285](docs/adr/000285-unattended-pr-repair-scope.md) が正本です。
 
-- 起動するのは、30分ごとの見回りと、PR にレビュー・行ごとの指摘・コメントが付いたときです。どちらも、最初に Claude を使わないスクリプト（`.github/scripts/pr-repair-select.sh`、判定は `pr-watch.sh`）で直す対象を決め、CI の失敗・返事をしていない指摘・コンフリクトがあるときだけ Claude を動かします。マージできる状態や、CI が実行中・レビュー待ちの PR では動かしません。
-- 指摘に対応するのは、CodeRabbit（`coderabbitai[bot]`）と、このリポジトリで write 以上の人が付けたものだけです。ほかの人の指摘には対応せず、返信もしません。イベントで起動するときも、付けた人がこの条件を満たさなければ動きません。
+- 起動するのは、30分ごとの見回りだけです（指摘が付いてから直すまでに、最大で30分待ちます）。PR にレビューやコメントが付いたときのイベントでは起動しません。それらのイベントは PR の変更後のワークフローで動くので、PR を書き換えられる人が、App の秘密鍵や OAuth トークンを渡すワークフローを書き換えて持ち出せてしまうためです。見回りは、既定のブランチのワークフローで動きます。見回りでは、最初に Claude を使わないスクリプト（`.github/scripts/pr-repair-select.sh`、判定は `pr-watch.sh`）で直す対象を決め、CI の失敗・返事をしていない指摘・コンフリクトがあるときだけ Claude を動かします。マージできる状態や、CI が実行中・レビュー待ちの PR では動かしません。
+- 指摘に対応するのは、CodeRabbit（`coderabbitai[bot]`）と、このリポジトリで write 以上の人が付けたものだけです。ほかの人の指摘には対応せず、返信もしません。
 - 直した指摘には、直したコミットを添えて返信します。直さない指摘には理由を返信します。スレッドは resolved にしません（resolved にするのは、レビューした人と CodeRabbit です。[上の手順](#指摘に手元の-claude-code-で対応する)と同じです）。
 - 同じ PR は直列にします（`concurrency`）。同じ失敗を直す回数（`repair.max_fix_attempts`）か、PR ごとの push の回数（`repair.max_pushes_per_pr`）が上限に達すると、Claude を動かさずに、理由を Issue にコメントして保留の列に移して止まります。再開するには、Issue を保留の列から戻します（保留の列にある間は、push や新しい指摘があっても見回りません）。戻したあとは、人の push か許可した投稿者の新しい指摘から数え直します。`.github/` と `.claude/` の変更が要る直し方は、push せずに止まります。
 - コンフリクトは `/dev-workflow:branch-update` の無人の手順で直します（衝突の直し方は代わりに決めて PR のコメントに残します）。強制 push・main への push・マージ・キューへの投入はしません。

@@ -3,8 +3,11 @@ name: pr-repair
 # 自動で作った PR（task-auto の GitHub App が作った PR）の CI の失敗・指摘・main とのコンフリクトを、Claude が無人で直す（このリポジトリ専用）。
 # 範囲・止まる条件・見回りを終える条件は docs/adr/000285-unattended-pr-repair-scope.md、回数の数え方は 000339・000340・000380。
 #
-# - 起動：定期（schedule）と、PR への指摘（レビュー・行ごとの指摘・コメント）が付いたとき。どちらも同じ手順で、
-#   最初に Claude を使わないスクリプトで直す対象があるかを決め、あるときだけ Claude を動かす（対象が無い回は、使用量を消費しない）
+# - 起動：定期（schedule）だけ。最初に Claude を使わないスクリプトで直す対象があるかを決め、あるときだけ Claude を動かす
+#   （対象が無い回は、使用量を消費しない）。指摘が付いてから直すまでに、最大で30分待つ
+#   - レビュー系のイベント（pull_request_review など）では起動しない。それらは PR の変更後のワークフローで動くので、
+#     PR を書き換えられる人が、App の秘密鍵や OAuth トークンを渡すワークフローを書き換えて持ち出せてしまう。
+#     schedule は既定のブランチのワークフローで動くので、この心配が無い
 #   - 対象：自動で作った PR（作成者が App、head がこのリポジトリのブランチ、下書きでない）で、PR が閉じる Issue が保留の列に無いもの
 #     （選ぶ処理は .github/scripts/pr-repair-select.sh。判定は plugins/dev-workflow/scripts/pr-watch.sh）
 #   - act（CI の失敗・返事をしていない指摘）→ gh-pr-check を無人で。conflict（コンフリクト・遅れ）→ branch-update を無人で。
@@ -23,12 +26,6 @@ name: pr-repair
 on:
   schedule:
     - cron: "10,40 * * * *"
-  pull_request_review:
-    types: [submitted]
-  pull_request_review_comment:
-    types: [created]
-  issue_comment:
-    types: [created]
 
 # 書き込みは App のトークンで行うので、GITHUB_TOKEN には権限を与えない
 permissions: {}
@@ -41,8 +38,6 @@ env:
 
 jobs:
   find:
-    # issue_comment は PR へのコメントだけを通す
-    if: github.event_name != 'issue_comment' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -69,17 +64,9 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BOT_LOGINS: ${{ steps.app-token.outputs.app-slug }}[bot]
           APP_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          SENDER: ${{ github.event.sender.login }}
         run: |
           set -euo pipefail
-          args=()
-          if [ "$EVENT_NAME" != schedule ]; then
-            # イベントのときは、そのPRだけを、投稿者が許可した人のときだけ調べる
-            args=(--pr "$PR_NUMBER" --sender "$SENDER")
-          fi
-          prs=$(.github/scripts/pr-repair-select.sh ${args[@]+"${args[@]}"} | jq -c --argjson m "$MAX_PRS" '.[:$m]')
+          prs=$(.github/scripts/pr-repair-select.sh | jq -c --argjson m "$MAX_PRS" '.[:$m]')
           echo "prs=$prs" >> "$GITHUB_OUTPUT"
           jq -r '.[] | "PR #\(.pr) (Issue #\(.issue)): \(.action) \(.reasons | join(","))"' <<<"$prs"
 
@@ -95,7 +82,7 @@ jobs:
       max-parallel: 1
       matrix:
         item: ${{ fromJSON(needs.find.outputs.prs) }}
-    # 同じ PR を同時に2つ直さない（定期とイベントが重なったときなど）。前の実行が終わるまで待つ
+    # 同じ PR を同時に2つ直さない（前の見回りがまだ動いているときなど）。前の実行が終わるまで待つ
     concurrency:
       group: pr-repair-${{ matrix.item.pr }}
       cancel-in-progress: false
@@ -179,7 +166,6 @@ jobs:
         if: steps.open.outputs.open == 'true'
         # 直列で待っている間に、前の実行が直していることがある。find と同じ選別（信頼する側の pr-repair-select.sh）で、
         # 開いている・下書きでない・自動で作った PR・Issue が保留の列に無い、を含めて決め直す（対象でなければ skip）。
-        # イベントの投稿者（--sender）は渡さない（投稿者の確認は find で済んでいる）
         working-directory: trusted
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -292,4 +278,4 @@ jobs:
           GH_TOKEN: ${{ steps.notify-token.outputs.token }}
         run: |
           gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
-            --body "PR #${PR_NUMBER} を無人で直す実行が失敗しました。ログ：${RUN_URL}"$'\n\n'"次の見回り（30分ごと）か、PR への新しい指摘で、もう一度試します。ランナーは使い捨てなので、push 済みでない変更は残りません。"
+            --body "PR #${PR_NUMBER} を無人で直す実行が失敗しました。ログ：${RUN_URL}"$'\n\n'"次の見回り（30分ごと）で、もう一度試します。ランナーは使い捨てなので、push 済みでない変更は残りません。"

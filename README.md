@@ -172,7 +172,7 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
 - 止める手段は2つです。設定 `auto.chain.enabled`（か `auto.merge.enabled`）を false にするか、進行中の PR にラベル `no-auto-merge` を付けます。付いている PR があると、次の Issue へ進みません。ラベル `no-auto-merge` は、まだプラグインの `labels.json` に無いので、使うなら自分で作ります（`gh label create no-auto-merge`）。後続の Issue で `labels.json` に足すまで、作るまでの止める手段は、設定を false にする方法だけです
 - 上限に達したとき・PR がマージされずに閉じたとき・`task-auto` が止まったとき（理由を Issue にコメントして保留の列に移します）・後片付けが止まったときは、次の Issue へ進まずに、連鎖の id・進めた Issue・止まった理由を伝えて止まります。止まった理由は直前の PR にもコメントします。自動では再開しないので、原因を直してから、手で起動し直します
 
-GitHub Actions から動かすこともできます。このリポジトリでは、Issue にラベル `auto` を付けると `.github/workflows/task-auto.yml` が task-auto を実行し、PR を作ります（ラベルを付けた人が write 以上のときだけ動きます）。push と PR の作成に GitHub App のトークンを使うなど、設定の手順は [CONTRIBUTING.md](CONTRIBUTING.md) の「Issue から自動で PR を作る」にあります。ワークフローのひな形は、プラグインの `templates` にはまだ置いていません。App やシークレットの前提があり、実際に動かして確かめる前に形を固定しないためです。確かめた後に、別の Issue で切り出します。また、`.github/workflows/pr-repair.yml` が、task-auto が作った PR の CI の失敗・指摘・コンフリクトを定期（30分ごと）とレビューのイベントで見回り、直すものがあるときだけ Claude を動かして直します（範囲と設定は [CONTRIBUTING.md](CONTRIBUTING.md) の「PR の指摘と CI の失敗を自動で直す」）。
+GitHub Actions から動かすこともできます。このリポジトリでは、Issue にラベル `auto` を付けると `.github/workflows/task-auto.yml` が task-auto を実行し、PR を作ります（ラベルを付けた人が write 以上のときだけ動きます）。push と PR の作成に GitHub App のトークンを使うなど、設定の手順は [CONTRIBUTING.md](CONTRIBUTING.md) の「Issue から自動で PR を作る」にあります。ワークフローのひな形は、プラグインの `templates` にはまだ置いていません。App やシークレットの前提があり、実際に動かして確かめる前に形を固定しないためです。確かめた後に、別の Issue で切り出します。また、`.github/workflows/pr-repair.yml` が、task-auto が作った PR の CI の失敗・指摘・コンフリクトを定期（30分ごと）に見回り、直すものがあるときだけ Claude を動かして直します（範囲と設定は [CONTRIBUTING.md](CONTRIBUTING.md) の「PR の指摘と CI の失敗を自動で直す」）。
 
 ## レビューの観点
 

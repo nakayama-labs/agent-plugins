@@ -22,11 +22,9 @@ step_of() {
   ' "$WF"
 }
 
-@test "定期の見回りと、PR への指摘のイベントで起動する" {
+@test "起動は定期の見回りだけで、PR の変更後のワークフローで動くイベントでは起動しない（秘密情報を持ち出されないため）" {
   grep -qE '^  schedule:' "$WF"
-  grep -qE '^  pull_request_review:' "$WF"
-  grep -qE '^  pull_request_review_comment:' "$WF"
-  grep -qE '^  issue_comment:' "$WF"
+  ! grep -qE '^  (pull_request|pull_request_target|pull_request_review|pull_request_review_comment|issue_comment|workflow_run):' "$WF"
 }
 
 @test "GITHUB_TOKEN には権限を与えない（書き込みは App のトークンで行う）" {
