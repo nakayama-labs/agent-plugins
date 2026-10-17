@@ -114,7 +114,7 @@ cleanup_of() {
 @test "入力の型や値が違えば終了コード 64 で止まる" {
   for f in '.chain_enabled = "true"' '.max = 0' '.max = 1.5' '.wait_minutes = 0' '.count = -1' '.waited_minutes = "x"' '.pr_state = "MERGING"' '.next = 0' '.next = "12"' '.next_decided = "true"'; do
     run_script chain-decide.sh <<<"$(jq -c "$f" <<<"$READY")"
-    [ "$status" -eq 64 ] || fail "$f が 64 で止まりません（$status）"
+    [ "$status" -eq 64 ] || fail "$f が 64 で止まりません（${status}）"
   done
   run_script chain-decide.sh <<<'[1]'
   assert_failure 64

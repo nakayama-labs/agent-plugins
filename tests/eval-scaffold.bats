@@ -368,7 +368,7 @@ grader_matches() {
   local w
   for w in 'issue comment 5 --body-file -' 'issue edit 8 --add-assignee @me' 'pr create --title x' 'pr merge 30 --squash' 'project item-edit --id IT8'; do
     printf '%s\n' "$w" >"$TMP/w2"
-    grader_matches "$c" no-next-start "$TMP/w2" || fail "no-next-start が「$w」に当たりません"
+    grader_matches "$c" no-next-start "$TMP/w2" || fail "no-next-start が「${w}」に当たりません"
   done
 }
 
