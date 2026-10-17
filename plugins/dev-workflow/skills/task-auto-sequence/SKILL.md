@@ -53,7 +53,7 @@ task-finish と task-auto の確認に当たったら、次のとおりに答え
 止まるときは、次のとおりにする。
 
 1. 設定が無効（`chain_disabled`・`auto_disabled`・`merge_disabled`）なら、何も書き込まずに、無効なので何もしなかったことと、有効にする設定（`auto.enabled`・`auto.merge.enabled`・`auto.chain.enabled`）を伝えて終える
-2. それ以外で、止まった理由を残す。コメントの本文を一時ファイルに書く（言語は設定の `language` に従う。止まった理由・連鎖の id・これまでに進めた Issue（`chain-record.sh` の `issues`）と件数・続けるには何を直してどう再開するか（人が原因を直してから、`/dev-workflow:task-auto-sequence` か task-auto を手で起動し直す。自動では再開しない））。`gh pr comment <PR番号> --body-file <ファイル>` で、直前の PR にコメントする。新しい連鎖で、手順5の記録の前に止まったとき（`limit`・`no_next`・`next_not_startable`・後片付けの失敗など）は、連鎖の id を書かず、再開用の `--first`・`--chain-id` も案内しない（記録が無いので、件数が1ずれる。続けるには、原因を直してから、同じ PR の番号で `/dev-workflow:task-auto-sequence` をもう一度実行する。そのときは新しい連鎖になる）。task-auto が止まったときは、task-auto が Issue にコメントして保留の列に移すので、それに加えて PR にコメントしなくてよい（結果で伝える）
+2. それ以外で、止まった理由を残す。コメントの本文を一時ファイルに書く（言語は設定の `language` に従う。止まった理由・連鎖の id・これまでに進めた Issue（`chain-record.sh` の `issues`）と件数・続けるには何を直してどう再開するか（人が原因を直してから、`/dev-workflow:task-auto-sequence` か task-auto を手で起動し直す。自動では再開しない））。`gh pr comment <PR番号> --body-file <ファイル>` で、直前の PR にコメントする。新しい連鎖で、手順5で記録する前に止まるときは、どの停止でも（`check_next` の失敗・`wait_timeout`・`pr_closed`・`limit`・`no_next`・`next_not_startable`・後片付けの失敗なども含む）、連鎖の id を書かず、再開用の `--first`・`--chain-id` も案内しない（記録が無いので、件数が1ずれる。続けるには、原因を直してから、同じ PR の番号で `/dev-workflow:task-auto-sequence` をもう一度実行する。そのときは新しい連鎖になる）。task-auto が止まったときは、task-auto が Issue にコメントして保留の列に移すので、それに加えて PR にコメントしなくてよい（結果で伝える）
 3. ユーザーに、止まった理由・連鎖の id と進めた Issue の一覧と件数（上限）（新しい連鎖で記録の前に止まったときは、どちらも無い）・残したもの（ワークツリーとブランチが残っていれば、その場所）を伝える
 
 ## 手順
@@ -65,7 +65,7 @@ task-finish と task-auto の確認に当たったら、次のとおりに答え
 `gh pr view <PR番号> --json number,state,isCrossRepository,headRefName,createdAt,labels,closingIssuesReferences` で PR を読む。
 
 - フォークからの PR（`isCrossRepository` が true）は対象外。何もせずに終える
-- PR が閉じる Issue（`closingIssuesReferences`）は、同じリポジトリのものだけに絞る（`repository` が今のリポジトリ（`gh repo view --json nameWithOwner`）と同じもの。`repository` が無いものは、PR の URL のリポジトリと同じとみなす。他のリポジトリの参照は数えない）。絞った結果が1つに決まらなければ、止まる（連鎖の最初の Issue と、次に記録する Issue を決められない）。その番号を「この PR の Issue」とする
+- PR が閉じる Issue（`closingIssuesReferences`）は、同じリポジトリのものだけに絞る。各参照の `repository` の `owner.login` と `name` を `<owner>/<name>` につないだものを、PR の URL のリポジトリ（`https://github.com/<owner>/<name>/pull/…`）と比べ、同じものだけ残す（`nameWithOwner` というフィールドは無い。cleanup.sh と同じ読み方）。`repository` が無い参照は、PR の URL のリポジトリと同じとみなす。他のリポジトリの参照は数えない。絞った結果が1つに決まらなければ、止まる（連鎖の最初の Issue と、次に記録する Issue を決められない）。その番号を「この PR の Issue」とする
 - `--first` が無ければ、新しい連鎖を始める。「この PR の Issue」を最初の Issue とし、連鎖の id を決める（`date -u +%Y%m%dT%H%M%S` の出力に `-` と4桁の乱数を付けたもの。例：`20261008T101500-4821`）。`--chain-id` が無くて `--first` だけがあるときは、止まる（記録を探せない）。新しい連鎖は、手順5で記録するまで、連鎖として始まっていない（記録が無いので、連鎖の id を再開用に案内しない。下の「止まる」の2・3）
 
 ### 2. 設定と連鎖の状態を読む

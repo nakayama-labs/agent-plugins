@@ -1147,9 +1147,9 @@ has() {
     '`chain-decide.sh`' '`chain-record.sh`' '`next-tasks.sh`' '`auto-check.sh`' '`cleanup.sh`'
   # 無効なら何もしない（設定が3つとも要る）
   has "task-auto-sequence の description" "$(frontmatter "$f")" 'auto.enabled・auto.merge.enabled・auto.chain.enabled'
-  has "止まる" "$(section "$f" '## 止まる')" '`chain_disabled`・`auto_disabled`・`merge_disabled`' '何も書き込まずに' 'gh pr comment <PR番号>' '自動では再開しない' '再開用の `--first`・`--chain-id` も案内しない' '新しい連鎖になる'
+  has "止まる" "$(section "$f" '## 止まる')" '`chain_disabled`・`auto_disabled`・`merge_disabled`' '何も書き込まずに' 'gh pr comment <PR番号>' '自動では再開しない' '手順5で記録する前に止まるときは、どの停止でも' '`wait_timeout`・`pr_closed`' '再開用の `--first`・`--chain-id` も案内しない' '新しい連鎖になる'
   has "確認の代わりに決めること" "$(section "$f" '## 確認の代わりに決めること')" 'git が無視するファイルを消してよいか' '消さずに止まる' '子がすべて閉じた親を閉じるか' '閉じない'
-  has "task-auto-sequence の手順1" "$(step "$f" 1)" 'フォークからの PR' '新しい連鎖を始める' '連鎖の id' '同じリポジトリのものだけに絞る' '他のリポジトリの参照は数えない'
+  has "task-auto-sequence の手順1" "$(step "$f" 1)" 'フォークからの PR' '新しい連鎖を始める' '連鎖の id' '同じリポジトリのものだけに絞る' '`owner.login` と `name` を `<owner>/<name>` につないだもの' '`nameWithOwner` というフィールドは無い' '他のリポジトリの参照は数えない'
   has "task-auto-sequence の手順2" "$(step "$f" 2)" 'auto.chain.max' 'auto.chain.wait_minutes' 'chain-record.sh --first' 'no-auto-merge'
   has "task-auto-sequence の手順3" "$(step "$f" 3)" 'chain-decide.sh' '`wait`' '`no_next`' '`next` と `next_action`' 'next-tasks.sh' 'auto-check.sh --issue' '`check_next`' '`next_decided`' 'もう一度調べ直さずに止まる' '`cleanup`' '`no_auto_merge`'
   has "task-auto-sequence の手順4" "$(step "$f" 4)" '`cleanup` が true のときだけ' 'cleanup.sh --branch' 'task-finish の手順2-1は行わない' '子がすべて閉じた親は閉じず'
