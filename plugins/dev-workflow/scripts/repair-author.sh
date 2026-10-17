@@ -47,8 +47,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$login" ] || dw_die "--login は必須です" 64
-# GitHub のログイン名（英数字とハイフン。bot は末尾に [bot]）だけを受ける。API のパスに入れる値なので、API を呼ぶ前に確かめる
-[[ "$login" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\[bot\])?$ ]] || dw_die "--login がログイン名の形ではありません: $login" 64
+# GitHub のログイン名（英数字とハイフン。Enterprise Managed User は _ も使う。bot は末尾に [bot]）だけを受ける。形だけを見る（GitHub の細かい規則、たとえば末尾のハイフンの禁止までは見ない。API のパスに入れても安全な文字だけにするため）。API のパスに入れる値なので、API を呼ぶ前に確かめる
+[[ "$login" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(\[bot\])?$ ]] || dw_die "--login がログイン名の形ではありません: $login" 64
 
 allowed="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" '.repair.allowed_authors // []')"
 jq -e 'type == "array" and all(.[]; type == "string")' >/dev/null 2>&1 <<<"$allowed" \

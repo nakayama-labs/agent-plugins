@@ -89,13 +89,22 @@ teardown() { rm -rf "$TMP"; }
   [ "$status" -eq 64 ]
 }
 
-@test "--login がログイン名の形（英数字とハイフン、bot は末尾に [bot]）でなければ、API を呼ばずに終了コード 64" {
-  for l in '../x' 'a/b' 'a b' '-a' 'a;b' 'a[bot]x' 'a?b=1' '[bot]'; do
+@test "--login がログイン名の形（英数字・ハイフン・_ 、bot は末尾に [bot]）でなければ、API を呼ばずに終了コード 64" {
+  for l in '../x' 'a/b' 'a b' '-a' '_a' 'a;b' 'a[bot]x' 'a?b=1' '[bot]' 'a.b' 'a%2Fb' 'a[bot' 'あ'; do
     run "$SCRIPTS/repair-author.sh" --login "$l"
     [ "$status" -eq 64 ] || fail "${l}: status ${status}"
   done
   [ ! -s "$TMP/calls" ]
-  echo write >"$TMP/fix/role-a-b"
-  run "$SCRIPTS/repair-author.sh" --login 'a-b[bot]'
-  assert_success
+}
+
+@test "--login が有効な形（_ を含む Enterprise Managed User・数字だけ・末尾のハイフン・[bot]）なら、API を呼んで判定する" {
+  for l in alice_acme a1 123 a-b a- a_b_c 'a-b[bot]' A; do
+    run "$SCRIPTS/repair-author.sh" --login "$l"
+    assert_success
+    [ "$(jq -r .action <<<"$output")" = deny ] || fail "${l}: $output"
+  done
+  [ "$(grep -c 'permission' "$TMP/calls")" = 8 ]
+  echo write >"$TMP/fix/role-alice_acme"
+  run "$SCRIPTS/repair-author.sh" --login alice_acme
+  [ "$(jq -r .action <<<"$output")" = allow ]
 }
