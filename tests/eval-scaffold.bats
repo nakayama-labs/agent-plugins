@@ -370,6 +370,19 @@ grader_matches() {
     printf '%s\n' "$w" >"$TMP/w2"
     grader_matches "$c" no-next-start "$TMP/w2" || fail "no-next-start が「${w}」に当たりません"
   done
+  # gh api の書き込み全般（REST・GraphQL の mutation での着手や記録）も禁止。許す pr comment だけは当たらない
+  : >.fake-gh/writes
+  gh api graphql -f query='mutation Start { updateIssue(input: {id: "x"}) { clientMutationId } }' >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が GraphQL の mutation に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh api -X POST repos/me/demo/issues/8/assignees -f 'assignees[]=me' >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が REST の POST に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh api repos/me/demo/issues/5/comments -f body=x >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が -f 付きの api に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  printf '止まった理由\n' | gh pr comment 30 --body-file - >/dev/null
+  if grader_matches "$c" no-next-start .fake-gh/writes; then fail "no-next-start が、許す pr comment に当たります"; fi
 }
 
 @test "task-auto-sequence の止める印のケースの準備の後、PR は開いたままで no-auto-merge が付き、chain-decide.sh は stop（no_auto_merge）で、grader に当たる" {
@@ -391,6 +404,18 @@ grader_matches() {
   grader_matches "$c" no-next-start "$TMP/w1" && fail "no-next-start に当たります"
   printf 'issue edit 8 --add-assignee @me\n' >"$TMP/w2"
   grader_matches "$c" no-next-start "$TMP/w2" || fail "no-next-start が次の Issue への着手に当たりません"
+  : >.fake-gh/writes
+  gh api graphql -f query='mutation Start { updateIssue(input: {id: "x"}) { clientMutationId } }' >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が GraphQL の mutation に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh api -X POST repos/me/demo/issues/8/assignees -f 'assignees[]=me' >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が REST の POST に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh api repos/me/demo/issues/5/comments -f body=x >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が -f 付きの api に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  printf '止まった理由\n' | gh pr comment 30 --body-file - >/dev/null
+  if grader_matches "$c" no-next-start .fake-gh/writes; then fail "no-next-start が、許す pr comment に当たります"; fi
 }
 
 @test "task-auto-sequence の正常系のケースの準備の後、後片付け・次の Issue の選択・着手のスクリプトが偽の gh で進み、grader に当たる" {
@@ -415,13 +440,73 @@ grader_matches() {
   assert_success
   assert_equal "$(jq -c '.issues | map(.number)' <<<"$output")" '[7]'
   [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
-  # 記録してから着手した書き込みは grader に当たり、着手してから記録した書き込みには当たらない
-  printf 'issue comment 5 --body-file -\nproject item-edit --id IT8 --field-id F1 --single-select-option-id OP\npr create --title x\n' >"$TMP/w1"
-  grader_matches "$c" records-before-start "$TMP/w1" || fail "records-before-start に当たりません"
-  grader_matches "$c" opens-pr "$TMP/w1" || fail "opens-pr に当たりません"
-  grader_matches "$c" no-merge-or-close "$TMP/w1" && fail "no-merge-or-close に当たります"
-  printf 'project item-edit --id IT8 --field-id F1 --single-select-option-id OP\nissue comment 5 --body-file -\n' >"$TMP/w2"
-  grader_matches "$c" records-before-start "$TMP/w2" && fail "records-before-start が、着手の後の記録に当たります"
-  printf 'pr merge 30 --squash\n' >"$TMP/w3"
-  grader_matches "$c" no-merge-or-close "$TMP/w3" || fail "no-merge-or-close が pr merge に当たりません"
+  # 偽の gh の書き込みの記録で、grader を確かめる（記録は run のたびに空にする）
+  local rec='<!-- dev-workflow:task-auto-sequence chain=c1 issue=8 -->'
+  # 記録してから着手した（本文は標準入力で渡す）：当たる
+  : >.fake-gh/writes
+  printf '%s\n連鎖（c1）で Issue #8 を進めました。\n' "$rec" | gh issue comment 5 --body-file - >/dev/null
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  gh pr create --title x >/dev/null
+  grep -q '^issue comment 5 --body-file - body: <!-- dev-workflow:task-auto-sequence chain=c1 issue=8 -->' .fake-gh/writes || fail "issue comment の本文が記録に添えられていません: $(cat .fake-gh/writes)"
+  grader_matches "$c" records-before-start .fake-gh/writes || fail "records-before-start に当たりません: $(cat .fake-gh/writes)"
+  grader_matches "$c" opens-pr .fake-gh/writes || fail "opens-pr に当たりません"
+  grader_matches "$c" no-merge-or-close .fake-gh/writes && fail "no-merge-or-close に当たります"
+  # 本文をファイルで渡しても、--body で渡しても当たる
+  : >.fake-gh/writes
+  printf '%s\n' "$rec" >"$TMP/rec.md"
+  gh issue comment 5 --body-file "$TMP/rec.md" >/dev/null
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  grader_matches "$c" records-before-start .fake-gh/writes || fail "ファイルの本文で records-before-start に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh issue comment 5 --body "$rec" >/dev/null
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  grader_matches "$c" records-before-start .fake-gh/writes || fail "--body の本文で records-before-start に当たりません: $(cat .fake-gh/writes)"
+  # 当たらない：#5 への別件のコメントだけ（連鎖の印が無い・別の Issue の印）、記録より先の着手、#8 でない記録、別の連鎖の記録
+  local other
+  for other in '別件のコメント' '<!-- dev-workflow:task-auto-sequence chain=c1 issue=7 -->' '<!-- dev-workflow:task-auto-sequence chain=c2 issue=8 -->'; do
+    : >.fake-gh/writes
+    printf '%s\n' "$other" | gh issue comment 5 --body-file - >/dev/null
+    gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+    grader_matches "$c" records-before-start .fake-gh/writes && fail "records-before-start が「$other」に当たります: $(cat .fake-gh/writes)"
+  done
+  : >.fake-gh/writes
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  printf '%s\n' "$rec" | gh issue comment 5 --body-file - >/dev/null
+  grader_matches "$c" records-before-start .fake-gh/writes && fail "records-before-start が、着手の後の記録に当たります"
+  : >.fake-gh/writes
+  printf '%s\n' "$rec" | gh issue comment 6 --body-file - >/dev/null
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  grader_matches "$c" records-before-start .fake-gh/writes && fail "records-before-start が、#5 でない Issue への記録に当たります"
+  # マージ・クローズ：gh のサブコマンド・REST（PUT・マージの経路・POST の本文付き）に当たる
+  local w
+  for w in 'pr merge 30 --squash' 'pr ready 30' 'issue close 8'; do
+    : >.fake-gh/writes
+    # shellcheck disable=SC2086 # サブコマンドを引数に分ける
+    gh $w >/dev/null 2>&1 || true
+    grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が「$w」に当たりません"
+  done
+  : >.fake-gh/writes
+  gh api -X PUT repos/me/demo/pulls/30/merge >/dev/null
+  grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が PUT のマージに当たりません"
+  : >.fake-gh/writes
+  gh api repos/me/demo/pulls/30/merge -f merge_method=squash >/dev/null
+  grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が -f 付きのマージの経路に当たりません"
+  : >.fake-gh/writes
+  gh api -X POST repos/me/demo/pulls/30/merge >/dev/null
+  grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が POST のマージの経路に当たりません"
+  # GraphQL の mutation：writes の行は操作名だけだが、.fake-gh/mutations に残り、graphql の grader に当たる
+  local m
+  for m in mergePullRequest enqueuePullRequest enablePullRequestAutoMerge closeIssue; do
+    : >.fake-gh/mutations
+    gh api graphql -f query="mutation Op { ${m}(input: {id: \"x\"}) { clientMutationId } }" >/dev/null
+    grader_matches "$c" no-merge-or-close-graphql .fake-gh/mutations || fail "no-merge-or-close-graphql が ${m} に当たりません"
+  done
+  : >.fake-gh/mutations
+  gh api graphql -f query='mutation Op { addComment(input: {subjectId: "x", body: "y"}) { clientMutationId } }' >/dev/null
+  grader_matches "$c" no-merge-or-close-graphql .fake-gh/mutations && fail "no-merge-or-close-graphql が、マージ・クローズでない mutation に当たります"
+  # 当たらない：読み取りと、着手の書き込み
+  : >.fake-gh/writes
+  gh api repos/me/demo/pulls/30 >/dev/null 2>&1 || true
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  if grader_matches "$c" no-merge-or-close .fake-gh/writes; then fail "no-merge-or-close が、着手の書き込みに当たります"; fi
 }
