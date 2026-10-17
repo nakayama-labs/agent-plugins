@@ -41,6 +41,7 @@ jobs:
           private-key: ${{ secrets.AUTO_APP_PRIVATE_KEY }}
       - name: ラベルを付けた人の権限を確かめる
         id: perm
+        # この規則（admin・maintain・write を許可、404 は権限なし、それ以外の失敗は失敗）は、plugins/dev-workflow/scripts/repair-author.sh の権限の判断と同じ。片方を変えたら、もう片方も変える
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -114,6 +115,7 @@ jobs:
           github_token: ${{ steps.run-token.outputs.token }}
           # プラグインのスキルとフック（guard-git など）は、チェックアウトした plugins/dev-workflow から読み込む。
           # 許可するツールは、リポジトリの編集・git・gh・テストの実行に絞る（AskUserQuestion は入れない。確認は task-auto が代わりに決める）
+          # この --allowedTools は pr-repair.yml の ALLOWED_TOOLS と同じ内容（スクリプトのパスだけ違う）。片方を変えたら、もう片方も変える
           claude_args: >-
             --max-turns 300
             --plugin-dir plugins/dev-workflow
