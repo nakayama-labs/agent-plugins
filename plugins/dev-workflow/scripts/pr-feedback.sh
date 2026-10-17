@@ -13,7 +13,7 @@
 #   handlers   設定の pr_check.handlers（投稿者 → 担当する skill の名前）
 #   feedback   投稿者ごとの配列。author・handler（担当する skill。無ければ null）・threads・reviews・comments
 #     threads   resolved でないスレッド。id（先頭のコメントの ID。返信に使う）・path・line・outdated・url・
-#               comments（author・body・created_at・url）・replied・needs_attention
+#               comments（id・author・body・created_at・url）・replied・needs_attention
 #     reviews   レビュー。本文のあるものと、承認（APPROVED）・変更の要求（CHANGES_REQUESTED）。id・state・body・submitted_at・commit・
 #               replied・needs_attention
 #     comments  PR のコメント（スレッドの外）。id・body・created_at・url・replied・needs_attention
@@ -165,7 +165,7 @@ printf '%s\n' "$view" "$threads" "$edits" | jq -s --argjson handlers "$handlers"
       | ([.comments | to_entries[] | select(.value.author | norm == $me) | .key] | last // -1) as $me_at
       | ($me_at > $by_at) as $replied
       | {author: $by.author, item: {id: .comments[0].id, path, line, outdated, url: .comments[0].url,
-          comments: [.comments[] | del(.id)], replied: $replied, needs_attention: ($replied | not)}}] as $t
+          comments: .comments, replied: $replied, needs_attention: ($replied | not)}}] as $t
   # PR の作者の PR のコメントの、最後の時刻（無ければ ""）。レビュー本文・PR のコメントは、この時刻以前に作られ、
   # この時刻より後に編集されていなければ、返事済みとする。時刻が null のものは返事済みにしない
   | ([($v.comments // [])[] | select((login | norm) == $me) | .createdAt] | max // "") as $last_own
