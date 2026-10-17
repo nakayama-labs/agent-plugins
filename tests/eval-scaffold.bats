@@ -345,3 +345,50 @@ grader_matches() {
   printf 'pr create --base main --head feat/2-add-farewell\n' >>.fake-gh/writes
   if grader_matches "$c" files-issue .fake-gh/writes; then fail "当たらない例に files-issue が当たります"; fi
 }
+
+@test "task-auto-sequence の上限のケースの準備の後、記録は上限に達し、chain-decide.sh は stop（limit）、後片付けは通り、grader に当たる" {
+  local c=task-auto-sequence-stops-at-limit
+  run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
+  assert_success
+  run_script chain-record.sh --first 5 --chain-id c1
+  assert_success
+  assert_equal "$(jq -c '[.issues, .count]' <<<"$output")" '[[5,7],2]'
+  run_script chain-decide.sh <<<'{"chain_enabled":true,"auto_enabled":true,"merge_enabled":true,"max":2,"wait_minutes":120,"record_readable":true,"count":2,"pr_state":"MERGED","no_auto_merge":false,"waited_minutes":0,"next":null,"next_action":null}'
+  assert_success
+  assert_equal "$(jq -c '[.action, .reason]' <<<"$output")" '["stop","limit"]'
+  # マージ済みの PR のブランチの後片付けが、偽の gh で最後まで通る
+  run_script cleanup.sh --branch feat/7-add-greet
+  assert_success
+  assert_equal "$(jq -c '.issues | map(.number)' <<<"$output")" '[7]'
+  [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
+  # 止まった理由を PR にコメントする書き込みは grader に当たり、次の Issue へ進む書き込みには当たらない
+  printf 'pr comment 30 --body-file -\n' >"$TMP/w1"
+  grader_matches "$c" comments-on-pr "$TMP/w1" || fail "comments-on-pr に当たりません"
+  grader_matches "$c" no-next-start "$TMP/w1" && fail "no-next-start に当たります"
+  local w
+  for w in 'issue comment 5 --body-file -' 'issue edit 8 --add-assignee @me' 'pr create --title x' 'pr merge 30 --squash' 'project item-edit --id IT8'; do
+    printf '%s\n' "$w" >"$TMP/w2"
+    grader_matches "$c" no-next-start "$TMP/w2" || fail "no-next-start が「$w」に当たりません"
+  done
+}
+
+@test "task-auto-sequence の止める印のケースの準備の後、PR は開いたままで no-auto-merge が付き、chain-decide.sh は stop（no_auto_merge）で、grader に当たる" {
+  local c=task-auto-sequence-stops-on-no-auto-merge
+  run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
+  assert_success
+  run gh pr view 30 --json state,labels
+  assert_success
+  assert_equal "$(jq -c '[.state, (.labels | map(.name))]' <<<"$output")" '["OPEN",["feat","no-auto-merge"]]'
+  run_script chain-record.sh --first 5 --chain-id c1
+  assert_success
+  assert_equal "$(jq -c .count <<<"$output")" 1
+  run_script chain-decide.sh <<<'{"chain_enabled":true,"auto_enabled":true,"merge_enabled":true,"max":3,"wait_minutes":120,"record_readable":true,"count":1,"pr_state":"OPEN","no_auto_merge":true,"waited_minutes":10,"next":null,"next_action":null}'
+  assert_success
+  assert_equal "$(jq -c '[.action, .reason]' <<<"$output")" '["stop","no_auto_merge"]'
+  [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
+  printf 'pr comment 30 --body-file -\n' >"$TMP/w1"
+  grader_matches "$c" comments-on-pr "$TMP/w1" || fail "comments-on-pr に当たりません"
+  grader_matches "$c" no-next-start "$TMP/w1" && fail "no-next-start に当たります"
+  printf 'issue edit 8 --add-assignee @me\n' >"$TMP/w2"
+  grader_matches "$c" no-next-start "$TMP/w2" || fail "no-next-start が次の Issue への着手に当たりません"
+}
