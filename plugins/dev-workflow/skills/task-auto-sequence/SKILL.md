@@ -53,8 +53,8 @@ task-finish と task-auto の確認に当たったら、次のとおりに答え
 止まるときは、次のとおりにする。
 
 1. 設定が無効（`chain_disabled`・`auto_disabled`・`merge_disabled`）なら、何も書き込まずに、無効なので何もしなかったことと、有効にする設定（`auto.enabled`・`auto.merge.enabled`・`auto.chain.enabled`）を伝えて終える
-2. それ以外で、止まった理由を残す。コメントの本文を一時ファイルに書く（言語は設定の `language` に従う。止まった理由・連鎖の id・これまでに進めた Issue（`chain-record.sh` の `issues`）と件数・続けるには何を直してどう再開するか（人が原因を直してから、`/dev-workflow:task-auto-sequence` か task-auto を手で起動し直す。自動では再開しない））。`gh pr comment <PR番号> --body-file <ファイル>` で、直前の PR にコメントする。task-auto が止まったときは、task-auto が Issue にコメントして保留の列に移すので、それに加えて PR にコメントしなくてよい（結果で伝える）
-3. ユーザーに、止まった理由・連鎖の id・進めた Issue の一覧と件数（上限）・残したもの（ワークツリーとブランチが残っていれば、その場所）を伝える
+2. それ以外で、止まった理由を残す。コメントの本文を一時ファイルに書く（言語は設定の `language` に従う。止まった理由・連鎖の id・これまでに進めた Issue（`chain-record.sh` の `issues`）と件数・続けるには何を直してどう再開するか（人が原因を直してから、`/dev-workflow:task-auto-sequence` か task-auto を手で起動し直す。自動では再開しない））。`gh pr comment <PR番号> --body-file <ファイル>` で、直前の PR にコメントする。新しい連鎖で、手順5の記録の前に止まったとき（`limit`・`no_next`・`next_not_startable`・後片付けの失敗など）は、連鎖の id を書かず、再開用の `--first`・`--chain-id` も案内しない（記録が無いので、件数が1ずれる。続けるには、原因を直してから、同じ PR の番号で `/dev-workflow:task-auto-sequence` をもう一度実行する。そのときは新しい連鎖になる）。task-auto が止まったときは、task-auto が Issue にコメントして保留の列に移すので、それに加えて PR にコメントしなくてよい（結果で伝える）
+3. ユーザーに、止まった理由・連鎖の id と進めた Issue の一覧と件数（上限）（新しい連鎖で記録の前に止まったときは、どちらも無い）・残したもの（ワークツリーとブランチが残っていれば、その場所）を伝える
 
 ## 手順
 
@@ -65,8 +65,8 @@ task-finish と task-auto の確認に当たったら、次のとおりに答え
 `gh pr view <PR番号> --json number,state,isCrossRepository,headRefName,createdAt,labels,closingIssuesReferences` で PR を読む。
 
 - フォークからの PR（`isCrossRepository` が true）は対象外。何もせずに終える
-- PR が閉じる Issue（`closingIssuesReferences`）が1つに決まらなければ、止まる（連鎖の最初の Issue と、次に記録する Issue を決められない）。その番号を「この PR の Issue」とする
-- `--first` が無ければ、新しい連鎖を始める。「この PR の Issue」を最初の Issue とし、連鎖の id を決める（`date -u +%Y%m%dT%H%M%S` の出力に `-` と4桁の乱数を付けたもの。例：`20261008T101500-4821`）。`--chain-id` が無くて `--first` だけがあるときは、止まる（記録を探せない）
+- PR が閉じる Issue（`closingIssuesReferences`）は、同じリポジトリのものだけに絞る（`repository` が今のリポジトリ（`gh repo view --json nameWithOwner`）と同じもの。`repository` が無いものは、PR の URL のリポジトリと同じとみなす。他のリポジトリの参照は数えない）。絞った結果が1つに決まらなければ、止まる（連鎖の最初の Issue と、次に記録する Issue を決められない）。その番号を「この PR の Issue」とする
+- `--first` が無ければ、新しい連鎖を始める。「この PR の Issue」を最初の Issue とし、連鎖の id を決める（`date -u +%Y%m%dT%H%M%S` の出力に `-` と4桁の乱数を付けたもの。例：`20261008T101500-4821`）。`--chain-id` が無くて `--first` だけがあるときは、止まる（記録を探せない）。新しい連鎖は、手順5で記録するまで、連鎖として始まっていない（記録が無いので、連鎖の id を再開用に案内しない。下の「止まる」の2・3）
 
 ### 2. 設定と連鎖の状態を読む
 
@@ -75,7 +75,7 @@ task-finish と task-auto の確認に当たったら、次のとおりに答え
 連鎖の記録を読む。
 
 - 既にある連鎖（`--first` がある）：`chain-record.sh --first <最初の Issue> --chain-id <連鎖の id>` を実行し、`count` と `issues` を覚える。失敗したら記録を読めなかったとする（`record_readable` は false）
-- 新しい連鎖：まだ記録は無い。最初の Issue の1件を進めた扱いとして、`count` は 1、`record_readable` は true とする（記録は手順4で足す）
+- 新しい連鎖：まだ記録は無い。最初の Issue の1件を進めた扱いとして、`count` は 1、`record_readable` は true とする（記録は手順5で足す）
 
 PR の経過時間（分）は `jq -n --arg t "<createdAt>" '(now - ($t | fromdateiso8601)) / 60 | floor'` で求める（PR を出して task-auto が終わった時刻の代わりに、PR の作成時刻を使う）。ラベル `no-auto-merge` が `labels` にあるかを見る。
 
@@ -84,27 +84,26 @@ PR の経過時間（分）は `jq -n --arg t "<createdAt>" '(now - ($t | fromda
 `chain-decide.sh` に、次の JSON を標準入力で渡す。
 
 ```json
-{"chain_enabled": …, "auto_enabled": …, "merge_enabled": …, "max": …, "wait_minutes": …, "record_readable": …, "count": …, "pr_state": "<MERGED・OPEN・CLOSED>", "no_auto_merge": …, "waited_minutes": …, "next": null, "next_action": null}
+{"chain_enabled": …, "auto_enabled": …, "merge_enabled": …, "max": …, "wait_minutes": …, "record_readable": …, "count": …, "pr_state": "<MERGED・OPEN・CLOSED>", "no_auto_merge": …, "waited_minutes": …, "next_decided": false, "next": null, "next_action": null}
 ```
 
-出力の `action` と `reason` に従う。
+出力の `action`・`reason`・`cleanup` に従う。
 
-- `stop` で `reason` が `no_next` 以外：「止まる」で止まる。PR がマージ済み（`pr_state` が MERGED）で、設定が有効（`chain_disabled`・`auto_disabled`・`merge_disabled` のどれでもない）なら、先に手順4の後片付けだけを行ってから止まる
-- `wait`：PR がまだマージされていない。何も書き込まずに、PR の番号・経過時間・待つ上限（`wait_minutes`）を伝えて終える。PR がマージされたら、同じ引数でもう一度実行するよう伝える
-- `stop` で `reason` が `no_next`、または、次の Issue をまだ決めていない：次の手順で次の Issue を決めてから、もう一度 `chain-decide.sh` を実行する（`next` と `next_action` を入れる）。`next` で終わりでない `stop`・`wait` は上のとおり
-
-次の Issue の決め方（task-next と同じ）：`next-tasks.sh` を実行し、出力の `next`（待ち・親の Issue・保留を除いた、Todo の先頭の1件）を次の Issue とする。無ければ `next` は null。`next` の Issue に `auto-check.sh --issue <番号>` を実行し、`action` を `next_action` とする（`proceed` のときだけ進める）。`next-tasks.sh`・`auto-check.sh` が失敗したら、止まる。
+- `check_next`（次の Issue をまだ調べていない）：次の Issue を調べ、`next_decided` を true にして、`next` と `next_action` を入れて、もう一度 `chain-decide.sh` を実行する。調べる手順（task-next と同じ）：`next-tasks.sh` を実行し、出力の `next`（待ち・親の Issue・保留を除いた、Todo の先頭の1件）を次の Issue とする。無ければ `next` は null。`next` の Issue に `auto-check.sh --issue <番号>` を実行し、`action` を `next_action` とする（`proceed` のときだけ進める）。`next-tasks.sh`・`auto-check.sh` が失敗したら、止まる
+- `stop`：「止まる」で止まる。**`no_next` は、調べ終えた後（`next_decided` が true）の結果なので確定で、もう一度調べ直さずに止まる**。後片付けは、出力の `cleanup` が true のときだけ、先に手順4を行ってから止まる（`cleanup` が false のとき、つまり設定が無効（`chain_disabled`・`auto_disabled`・`merge_disabled`）か、PR が MERGED でないときは行わない。MERGED の PR に `no-auto-merge` が付いていた（`no_auto_merge`）ときは、`cleanup` は true なので後片付けをする）
+- `wait`：PR がまだマージされていない（`cleanup` は false）。何も書き込まずに、PR の番号・経過時間・待つ上限（`wait_minutes`）を伝えて終える。PR がマージされたら、同じ引数でもう一度実行するよう伝える
+- `next`：手順4（後片付け。`cleanup` は true）のあと、手順5へ進む
 
 ### 4. マージされた PR の後片付けをする
 
-PR が MERGED のときだけ行う（OPEN・CLOSED では何もしない）。task-finish の手順に従い、上の「確認の代わりに決めること」のとおりに答える。
+`chain-decide.sh` の出力の `cleanup` が true のときだけ行う（PR が MERGED で、設定が有効なとき。OPEN・CLOSED と、設定が無効なときは何もしない）。task-finish の手順に従い、上の「確認の代わりに決めること」のとおりに答える。
 
 1. `main-root.sh` の `main_root` に `cd` する（削除するワークツリーの外に出る）
 2. PR のブランチ（`headRefName`）で、`cleanup.sh --branch <ブランチ>` を実行する。マージ済みなので、キューを待たない（task-finish の手順2-1は行わない）
 3. 止まったら（task-finish の手順2のエラー）、変更を捨てずに「止まる」で止まる。`base_branch` を最新にできていなければ、次の Issue へ進まない
 4. 結果を伝える（task-finish の手順3）。PR が閉じる Issue が開いたままなら、そのことも伝える。子がすべて閉じた親は閉じず、番号を伝える
 
-手順3で `next` になったときは、後片付けが済んでから手順5へ進む。
+手順3で `next` になったときは、後片付けが済んでから手順5へ進む。止まるときは、後片付けの後に「止まる」へ進む。
 
 ### 5. 次の Issue を記録して、task-auto で進める
 
