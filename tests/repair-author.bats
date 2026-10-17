@@ -88,3 +88,14 @@ teardown() { rm -rf "$TMP"; }
   run "$SCRIPTS/repair-author.sh" --nope
   [ "$status" -eq 64 ]
 }
+
+@test "--login がログイン名の形（英数字とハイフン、bot は末尾に [bot]）でなければ、API を呼ばずに終了コード 64" {
+  for l in '../x' 'a/b' 'a b' '-a' 'a;b' 'a[bot]x' 'a?b=1' '[bot]'; do
+    run "$SCRIPTS/repair-author.sh" --login "$l"
+    [ "$status" -eq 64 ] || fail "${l}: status ${status}"
+  done
+  [ ! -s "$TMP/calls" ]
+  echo write >"$TMP/fix/role-a-b"
+  run "$SCRIPTS/repair-author.sh" --login 'a-b[bot]'
+  assert_success
+}
