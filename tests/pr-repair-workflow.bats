@@ -135,3 +135,26 @@ step_of() {
   run grep -E '^      RUN_ID:' "$WF"
   [[ "$output" =~ RUN_ID:\ pr-repair-\$\{\{\ github.run_id\ \}\}-\$\{\{\ github.run_attempt\ \}\}-\$\{\{\ matrix.item.pr\ \}\}$ ]]
 }
+
+@test "チェックアウトの前に PR が開いているかを確かめ、閉じていれば準備・判定・失敗の通知を飛ばす（ブランチが消えた誤通知を防ぐ）" {
+  # 確かめる step が、PR のブランチのチェックアウトより前にある
+  open_line=$(grep -n 'name: PR がまだ開いているかを確かめる' "$WF" | head -1 | cut -d: -f1)
+  checkout_line=$(grep -n 'ref: ${{ matrix.item.branch }}' "$WF" | head -1 | cut -d: -f1)
+  [ -n "$open_line" ] && [ -n "$checkout_line" ] && [ "$open_line" -lt "$checkout_line" ]
+  # PR のブランチのチェックアウトと、それに依存する準備・判定は、開いているときだけ動く
+  for n in 'name: 道具を入れる' 'name: git の作者と認証を App にする' 'name: PR の今の状態を判定し直す'; do
+    run step_of "${n#name: }"
+    [[ "$output" == *"if: steps.open.outputs.open == 'true'"* ]]
+  done
+  # 失敗の通知は、閉じているとわかった PR には付けない
+  [ "$(grep -c "steps.open.outputs.open != 'false'" "$WF")" = 2 ]
+}
+
+@test "claude-code-action は、指摘に対応してよい投稿者（bot）を実行者として拒否しない（allowed_bots）" {
+  [ "$(grep -c 'allowed_bots: ${{ env.ALLOWED_AUTHORS }}' "$WF")" = 2 ]
+}
+
+@test "保留で止まるときのコメントは、再開に Issue を保留の列から戻すことを書く（保留の列にある間は見回らない）" {
+  grep -q '再開するには、Issue を保留の列から戻してください' "$WF"
+  grep -q '再開するには、Issue を保留の列から戻します' "$BATS_TEST_DIRNAME/../CONTRIBUTING.md"
+}

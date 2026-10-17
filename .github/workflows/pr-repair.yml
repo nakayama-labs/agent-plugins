@@ -116,7 +116,19 @@ jobs:
         with:
           app-id: ${{ vars.AUTO_APP_ID }}
           private-key: ${{ secrets.AUTO_APP_PRIVATE_KEY }}
+      # 待っている間に PR がマージされて閉じ、head のブランチが消えていることがある。そのままチェックアウトすると失敗して、
+      # 閉じた Issue に誤った失敗通知が付くので、開いていなければ、以降の準備と判定を飛ばして何もせずに終える
+      - name: PR がまだ開いているかを確かめる
+        id: open
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          state=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.state')
+          echo "PR #${PR_NUMBER}: ${state}"
+          echo "open=$([ "$state" = open ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v5
+        if: steps.open.outputs.open == 'true'
         with:
           # find が選んだ時点のブランチ。待っている間に push されていても、最新を取る
           ref: ${{ matrix.item.branch }}
@@ -128,17 +140,21 @@ jobs:
       # 判定・保留のスクリプトとプラグインは、既定のブランチのもの（trusted/）を使う。PR のブランチの後にチェックアウトする
       # （PR 側のチェックアウトが、先にあるディレクトリを消さないように）
       - uses: actions/checkout@v5
+        if: steps.open.outputs.open == 'true'
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: trusted
           persist-credentials: false
       - name: trusted/ を git の対象外にする
+        if: steps.open.outputs.open == 'true'
         # Claude がコミットするときに、trusted/ を PR の変更に含めない
         run: echo '/trusted/' >> .git/info/exclude
       - name: 道具を入れる
+        if: steps.open.outputs.open == 'true'
         # bats と GNU parallel は、リポジトリのテストを動かすのに要る。jq・gh・shellcheck はランナーに入っている
         run: sudo apt-get update -q && sudo apt-get install -y -q bats parallel
       - name: git の作者と認証を App にする
+        if: steps.open.outputs.open == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
@@ -150,6 +166,7 @@ jobs:
           # git push も App のトークンで行う（PR で lint・test を起動するため）。gh が環境変数 GH_TOKEN から認証する
           gh auth setup-git
       - name: 見回りの設定を、この実行だけ個人の層で有効にする
+        if: steps.open.outputs.open == 'true'
         # 信頼する側（判定・保留のスクリプトが読む）と、PR 側（Claude が動かすスキルのスクリプトが読む）の両方に書く
         env:
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
@@ -159,6 +176,7 @@ jobs:
           trusted/.github/scripts/pr-repair-config.sh .claude/dev-workflow/config.local.json
       - name: PR の今の状態を判定し直す
         id: watch
+        if: steps.open.outputs.open == 'true'
         # 直列で待っている間に、前の実行が直していることがある。find と同じ選別（信頼する側の pr-repair-select.sh）で、
         # 開いている・下書きでない・自動で作った PR・Issue が保留の列に無い、を含めて決め直す（対象でなければ skip）。
         # イベントの投稿者（--sender）は渡さない（投稿者の確認は find で済んでいる）
@@ -192,7 +210,7 @@ jobs:
           {
             echo "PR #${PR_NUMBER} を無人で直すのを止めます。${why}（理由：${REASONS}）。"
             echo
-            echo "人が直して push するか、許可した投稿者が新しい指摘を付けると、数え直して再開できます。保留の列から戻したあとも、同じ理由が残っている間は、また止まります。"
+            echo "再開するには、Issue を保留の列から戻してください（保留の列にある間は、push や新しい指摘があっても見回りません）。戻したあとは、人の push か許可した投稿者の新しい指摘から数え直します。同じ理由が残っている間は、また止まります。"
             echo
             echo "実行：${RUN_URL}"
           } > "${RUNNER_TEMP}/hold-reason.md"
@@ -217,6 +235,9 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.run-token.outputs.token }}
+          # PR への指摘は CodeRabbit（bot）が付けるので、実行者が bot でも拒否されないようにする。許可するのは指摘に対応してよい投稿者だけ
+          # （起動する前に pr-repair-select.sh が投稿者を確かめている）
+          allowed_bots: ${{ env.ALLOWED_AUTHORS }}
           # プラグインのスキルとフック（guard-git など）は、信頼する側（既定のブランチ）の trusted/plugins/dev-workflow から読み込む。
           # スキルが ${CLAUDE_PLUGIN_ROOT} で呼ぶスクリプトも、そこのもの（作業ディレクトリは PR のブランチ）
           claude_args: >-
@@ -241,6 +262,9 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.run-token.outputs.token }}
+          # PR への指摘は CodeRabbit（bot）が付けるので、実行者が bot でも拒否されないようにする。許可するのは指摘に対応してよい投稿者だけ
+          # （起動する前に pr-repair-select.sh が投稿者を確かめている）
+          allowed_bots: ${{ env.ALLOWED_AUTHORS }}
           claude_args: >-
             --max-turns 300
             --plugin-dir ${{ github.workspace }}/trusted/plugins/dev-workflow
@@ -256,14 +280,14 @@ jobs:
       - name: 通知用の GitHub App token
         id: notify-token
         # 実行が1時間近くかかると最初のトークンは失効しているので、失敗の通知には発行し直す
-        if: (failure() || cancelled()) && steps.app-token.outcome == 'success'
+        if: (failure() || cancelled()) && steps.app-token.outcome == 'success' && steps.open.outputs.open != 'false'
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.AUTO_APP_ID }}
           private-key: ${{ secrets.AUTO_APP_PRIVATE_KEY }}
       - name: 失敗したことを Issue に知らせる
         # 止まる条件に当たったときは、スキルが理由を Issue にコメントして保留の列に移し、正常に終わる。ここに来るのは、実行そのものが失敗したとき
-        if: (failure() || cancelled()) && steps.app-token.outcome == 'success'
+        if: (failure() || cancelled()) && steps.app-token.outcome == 'success' && steps.open.outputs.open != 'false'
         env:
           GH_TOKEN: ${{ steps.notify-token.outputs.token }}
         run: |
