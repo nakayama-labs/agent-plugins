@@ -467,7 +467,7 @@ grader_matches() {
     : >.fake-gh/writes
     printf '%s\n' "$other" | gh issue comment 5 --body-file - >/dev/null
     gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
-    grader_matches "$c" records-before-start .fake-gh/writes && fail "records-before-start が「$other」に当たります: $(cat .fake-gh/writes)"
+    grader_matches "$c" records-before-start .fake-gh/writes && fail "records-before-start が「${other}」に当たります: $(cat .fake-gh/writes)"
   done
   : >.fake-gh/writes
   gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
@@ -483,7 +483,7 @@ grader_matches() {
     : >.fake-gh/writes
     # shellcheck disable=SC2086 # サブコマンドを引数に分ける
     gh $w >/dev/null 2>&1 || true
-    grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が「$w」に当たりません"
+    grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が「${w}」に当たりません"
   done
   : >.fake-gh/writes
   gh api -X PUT repos/me/demo/pulls/30/merge >/dev/null
