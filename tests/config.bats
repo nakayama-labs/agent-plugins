@@ -295,6 +295,17 @@ load test_helper
   assert_equal "$(jq -r 'map(select(endswith("😀😀-user/config.json"))) | length' <<<"$output")" 1
 }
 
+@test "無人のマージと連鎖の設定の既定は、すべて無効で、上限と待つ時間が決まっている（ADR 000411）" {
+  run_script config.sh '.auto | [.merge.enabled, .merge.require_human_approval, .chain.enabled, .chain.max, .chain.wait_minutes] | tojson'
+  assert_success
+  assert_output '[false,false,false,3,120]'
+  # リポジトリの設定が、節の一部だけを上書きしても、ほかの既定は残る
+  echo '{"auto": {"chain": {"max": 5}}}' >.claude/dev-workflow/config.json
+  run_script config.sh '.auto | [.chain.enabled, .chain.max, .chain.wait_minutes, .merge.enabled] | tojson'
+  assert_success
+  assert_output '[false,5,120,false]'
+}
+
 @test "設定の節がオブジェクトでない（文字列・数値・配列）とき、config.sh は節を名指しした1行と終了コード 2 で止まる" {
   local sec v
   for sec in review commit pr project status story_point checks sub_issues labels branch adr pr_check auto; do
