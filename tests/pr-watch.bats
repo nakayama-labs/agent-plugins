@@ -720,6 +720,21 @@ run_marker() { printf '<!-- dev-workflow:repair-run head=%s --> 実行ログ' "$
   done
 }
 
+@test "repair.* の数が範囲の外（負の値・0・小数）なら、repair を含むメッセージで止まる" {
+  setup_fake_gh
+  for c in '{"review_wait_minutes": -1}' '{"max_fix_attempts": 0}' '{"max_pushes_per_pr": 0}' '{"max_fix_attempts": 2.5}' '{"max_pushes_per_pr": -3}'; do
+    repair_cfg "$c"
+    run_script pr-watch.sh --pr 5
+    assert_failure
+    assert_output --partial "repair"
+  done
+  # 境界は受け付ける（review_wait_minutes は 0 でよい）
+  pr_view '{}'
+  repair_cfg '{"review_wait_minutes": 0, "max_fix_attempts": 1, "max_pushes_per_pr": 1}'
+  run_script pr-watch.sh --pr 5
+  assert_success
+}
+
 # jq 1.7 は、オブジェクトの値に「(…) + …」を括弧で包まずに書くと読めない（1.8 は読めるので、手元の jq が新しいと気づかない。CI の jq で落ちた）
 @test "scripts の jq で、オブジェクトの値に書いた (…) + … は、全体を括弧で包む（jq 1.7 が読めない）" {
   run awk '

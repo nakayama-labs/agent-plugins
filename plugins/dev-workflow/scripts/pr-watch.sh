@@ -132,6 +132,8 @@ cfg="$("$BASH" "$DW_SCRIPTS_DIR/config.sh" '{
 jq -e '.enabled | type == "boolean"' >/dev/null 2>&1 <<<"$cfg" || dw_die "設定の repair.enabled は true か false にしてください"
 jq -e '([.logins, .allowed, .wait] | all(type == "array" and all(.[]; type == "string"))) and ([.wait_min, .max_fix, .max_push] | all(type == "number"))' >/dev/null 2>&1 <<<"$cfg" \
   || dw_die "設定の repair.* の型が正しくありません（reply_logins・allowed_authors・wait_for_reviewers は文字列の配列、review_wait_minutes・max_fix_attempts・max_pushes_per_pr は数）"
+jq -e '(.wait_min >= 0) and ([.max_fix, .max_push] | all(. >= 1 and . == floor))' >/dev/null 2>&1 <<<"$cfg" \
+  || dw_die "設定の repair.* の範囲が正しくありません（review_wait_minutes は 0 以上、max_fix_attempts と max_pushes_per_pr は 1 以上の整数）"
 
 # 試した回数（同じ head_sha の repair-run と、head が進んだ回数。ADR 000340）と、無人の push の時刻は、repair.enabled が true で、
 # repair.reply_logins があるときだけ、PR のコメントとコミットから読む。読めなければ数えない（act のまま）
