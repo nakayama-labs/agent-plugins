@@ -246,7 +246,7 @@ printf '%s\n' "$fb" "$res" | jq -s --argjson mq "$mq" --arg idle_reason "$idle_r
                                        if $ms == "BEHIND" then "behind" else empty end])}
      elif $f.checks.state == "failure" or $n_threads > 0 or $n_reviews > 0 or $n_comments > 0 then
        {action: (if $f.checks.state == "failure" and ($limits | length) > 0 then "stop" else "act" end),
-        reasons: ($limits | if $f.checks.state == "failure" then . else [] end) + ([if $f.checks.state == "failure" then "ci_failed" else empty end,
+        reasons: (($limits | if $f.checks.state == "failure" then . else [] end) + [if $f.checks.state == "failure" then "ci_failed" else empty end,
                                   if $n_threads > 0 then "unresolved_threads" else empty end,
                                   if $n_reviews > 0 then "unanswered_reviews" else empty end,
                                   if $n_comments > 0 then "unanswered_comments" else empty end])}

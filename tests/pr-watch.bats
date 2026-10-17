@@ -719,3 +719,21 @@ run_marker() { printf '<!-- dev-workflow:repair-run head=%s --> 実行ログ' "$
     assert_output --partial "repair"
   done
 }
+
+# jq 1.7 は、オブジェクトの値に「(…) + …」を括弧で包まずに書くと読めない（1.8 は読めるので、手元の jq が新しいと気づかない。CI の jq で落ちた）
+@test "scripts の jq で、オブジェクトの値に書いた (…) + … は、全体を括弧で包む（jq 1.7 が読めない）" {
+  run awk '
+    /^[[:space:]]*\{?[a-z_]+: \(/ {
+      line = $0; sub(/^[[:space:]]*\{?[a-z_]+: /, "", line)
+      depth = 0
+      for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (c == "(") depth++
+        else if (c == ")") { depth--; if (depth == 0) break }
+      }
+      if (depth == 0 && substr(line, i + 1) ~ /^[[:space:]]*\+/) { print FILENAME ":" FNR ": " $0; bad = 1 }
+    }
+    END { exit bad }
+  ' "$BATS_TEST_DIRNAME"/../plugins/dev-workflow/scripts/*.sh
+  assert_success
+}
