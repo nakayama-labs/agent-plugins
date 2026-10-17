@@ -345,3 +345,168 @@ grader_matches() {
   printf 'pr create --base main --head feat/2-add-farewell\n' >>.fake-gh/writes
   if grader_matches "$c" files-issue .fake-gh/writes; then fail "当たらない例に files-issue が当たります"; fi
 }
+
+@test "task-auto-sequence の上限のケースの準備の後、記録は上限に達し、chain-decide.sh は stop（limit）、後片付けは通り、grader に当たる" {
+  local c=task-auto-sequence-stops-at-limit
+  run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
+  assert_success
+  run_script chain-record.sh --first 5 --chain-id c1
+  assert_success
+  assert_equal "$(jq -c '[.issues, .count]' <<<"$output")" '[[5,7],2]'
+  run_script chain-decide.sh <<<'{"chain_enabled":true,"auto_enabled":true,"merge_enabled":true,"max":2,"wait_minutes":120,"record_readable":true,"count":2,"pr_state":"MERGED","no_auto_merge":false,"waited_minutes":0,"next":null,"next_action":null}'
+  assert_success
+  assert_equal "$(jq -c '[.action, .reason]' <<<"$output")" '["stop","limit"]'
+  # マージ済みの PR のブランチの後片付けが、偽の gh で最後まで通る
+  run_script cleanup.sh --branch feat/7-add-greet
+  assert_success
+  assert_equal "$(jq -c '.issues | map(.number)' <<<"$output")" '[7]'
+  [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
+  # 止まった理由を PR にコメントする書き込みは grader に当たり、次の Issue へ進む書き込みには当たらない
+  printf 'pr comment 30 --body-file -\n' >"$TMP/w1"
+  grader_matches "$c" comments-on-pr "$TMP/w1" || fail "comments-on-pr に当たりません"
+  grader_matches "$c" no-next-start "$TMP/w1" && fail "no-next-start に当たります"
+  local w
+  for w in 'issue comment 5 --body-file -' 'issue edit 8 --add-assignee @me' 'pr create --title x' 'pr merge 30 --squash' 'project item-edit --id IT8'; do
+    printf '%s\n' "$w" >"$TMP/w2"
+    grader_matches "$c" no-next-start "$TMP/w2" || fail "no-next-start が「${w}」に当たりません"
+  done
+  # gh api の書き込み全般（REST・GraphQL の mutation での着手や記録）も禁止。許す pr comment だけは当たらない
+  : >.fake-gh/writes
+  gh api graphql -f query='mutation Start { updateIssue(input: {id: "x"}) { clientMutationId } }' >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が GraphQL の mutation に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh api -X POST repos/me/demo/issues/8/assignees -f 'assignees[]=me' >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が REST の POST に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh api repos/me/demo/issues/5/comments -f body=x >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が -f 付きの api に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  printf '止まった理由\n' | gh pr comment 30 --body-file - >/dev/null
+  if grader_matches "$c" no-next-start .fake-gh/writes; then fail "no-next-start が、許す pr comment に当たります"; fi
+}
+
+@test "task-auto-sequence の止める印のケースの準備の後、PR は開いたままで no-auto-merge が付き、chain-decide.sh は stop（no_auto_merge）で、grader に当たる" {
+  local c=task-auto-sequence-stops-on-no-auto-merge
+  run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
+  assert_success
+  run gh pr view 30 --json state,labels
+  assert_success
+  assert_equal "$(jq -c '[.state, (.labels | map(.name))]' <<<"$output")" '["OPEN",["feat","no-auto-merge"]]'
+  run_script chain-record.sh --first 5 --chain-id c1
+  assert_success
+  assert_equal "$(jq -c .count <<<"$output")" 1
+  run_script chain-decide.sh <<<'{"chain_enabled":true,"auto_enabled":true,"merge_enabled":true,"max":3,"wait_minutes":120,"record_readable":true,"count":1,"pr_state":"OPEN","no_auto_merge":true,"waited_minutes":10,"next":null,"next_action":null}'
+  assert_success
+  assert_equal "$(jq -c '[.action, .reason]' <<<"$output")" '["stop","no_auto_merge"]'
+  [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
+  printf 'pr comment 30 --body-file -\n' >"$TMP/w1"
+  grader_matches "$c" comments-on-pr "$TMP/w1" || fail "comments-on-pr に当たりません"
+  grader_matches "$c" no-next-start "$TMP/w1" && fail "no-next-start に当たります"
+  printf 'issue edit 8 --add-assignee @me\n' >"$TMP/w2"
+  grader_matches "$c" no-next-start "$TMP/w2" || fail "no-next-start が次の Issue への着手に当たりません"
+  : >.fake-gh/writes
+  gh api graphql -f query='mutation Start { updateIssue(input: {id: "x"}) { clientMutationId } }' >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が GraphQL の mutation に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh api -X POST repos/me/demo/issues/8/assignees -f 'assignees[]=me' >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が REST の POST に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh api repos/me/demo/issues/5/comments -f body=x >/dev/null
+  grader_matches "$c" no-next-start .fake-gh/writes || fail "no-next-start が -f 付きの api に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  printf '止まった理由\n' | gh pr comment 30 --body-file - >/dev/null
+  if grader_matches "$c" no-next-start .fake-gh/writes; then fail "no-next-start が、許す pr comment に当たります"; fi
+}
+
+@test "task-auto-sequence の正常系のケースの準備の後、後片付け・次の Issue の選択・着手のスクリプトが偽の gh で進み、grader に当たる" {
+  local c=task-auto-sequence-proceeds-to-next
+  run "${TEST_BASH:-bash}" "$EVALS/$c/fixture.sh"
+  assert_success
+  run_script chain-record.sh --first 5 --chain-id c1
+  assert_success
+  assert_equal "$(jq -c '[.issues, .count]' <<<"$output")" '[[5,7],2]'
+  # 次の Issue の選択：Todo の先頭は #8 で、task-auto で進められる
+  run_script next-tasks.sh
+  assert_success
+  assert_equal "$(jq -c .next <<<"$output")" 8
+  run_script auto-check.sh --issue 8
+  assert_success
+  assert_equal "$(jq -r .action <<<"$output")" proceed
+  run_script chain-decide.sh <<<'{"chain_enabled":true,"auto_enabled":true,"merge_enabled":true,"max":3,"wait_minutes":120,"record_readable":true,"count":2,"pr_state":"MERGED","no_auto_merge":false,"waited_minutes":0,"next_decided":true,"next":8,"next_action":"proceed"}'
+  assert_success
+  assert_equal "$(jq -c '[.action, .cleanup]' <<<"$output")" '["next",true]'
+  # マージ済みの PR のブランチの後片付けが通る
+  run_script cleanup.sh --branch feat/7-add-greet
+  assert_success
+  assert_equal "$(jq -c '.issues | map(.number)' <<<"$output")" '[7]'
+  [ ! -s .fake-gh/writes ] || fail "書き込みが記録されました: $(cat .fake-gh/writes)"
+  # 偽の gh の書き込みの記録で、grader を確かめる（記録は run のたびに空にする）
+  local rec='<!-- dev-workflow:task-auto-sequence chain=c1 issue=8 -->'
+  # 記録してから着手した（本文は標準入力で渡す）：当たる
+  : >.fake-gh/writes
+  printf '%s\n連鎖（c1）で Issue #8 を進めました。\n' "$rec" | gh issue comment 5 --body-file - >/dev/null
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  gh pr create --title x >/dev/null
+  grep -q '^issue comment 5 --body-file - body: <!-- dev-workflow:task-auto-sequence chain=c1 issue=8 -->' .fake-gh/writes || fail "issue comment の本文が記録に添えられていません: $(cat .fake-gh/writes)"
+  grader_matches "$c" records-before-start .fake-gh/writes || fail "records-before-start に当たりません: $(cat .fake-gh/writes)"
+  grader_matches "$c" opens-pr .fake-gh/writes || fail "opens-pr に当たりません"
+  grader_matches "$c" no-merge-or-close .fake-gh/writes && fail "no-merge-or-close に当たります"
+  # 本文をファイルで渡しても、--body で渡しても当たる
+  : >.fake-gh/writes
+  printf '%s\n' "$rec" >"$TMP/rec.md"
+  gh issue comment 5 --body-file "$TMP/rec.md" >/dev/null
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  grader_matches "$c" records-before-start .fake-gh/writes || fail "ファイルの本文で records-before-start に当たりません: $(cat .fake-gh/writes)"
+  : >.fake-gh/writes
+  gh issue comment 5 --body "$rec" >/dev/null
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  grader_matches "$c" records-before-start .fake-gh/writes || fail "--body の本文で records-before-start に当たりません: $(cat .fake-gh/writes)"
+  # 当たらない：#5 への別件のコメントだけ（連鎖の印が無い・別の Issue の印）、記録より先の着手、#8 でない記録、別の連鎖の記録
+  local other
+  for other in '別件のコメント' '<!-- dev-workflow:task-auto-sequence chain=c1 issue=7 -->' '<!-- dev-workflow:task-auto-sequence chain=c2 issue=8 -->'; do
+    : >.fake-gh/writes
+    printf '%s\n' "$other" | gh issue comment 5 --body-file - >/dev/null
+    gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+    grader_matches "$c" records-before-start .fake-gh/writes && fail "records-before-start が「${other}」に当たります: $(cat .fake-gh/writes)"
+  done
+  : >.fake-gh/writes
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  printf '%s\n' "$rec" | gh issue comment 5 --body-file - >/dev/null
+  grader_matches "$c" records-before-start .fake-gh/writes && fail "records-before-start が、着手の後の記録に当たります"
+  : >.fake-gh/writes
+  printf '%s\n' "$rec" | gh issue comment 6 --body-file - >/dev/null
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  grader_matches "$c" records-before-start .fake-gh/writes && fail "records-before-start が、#5 でない Issue への記録に当たります"
+  # マージ・クローズ：gh のサブコマンド・REST（PUT・マージの経路・POST の本文付き）に当たる
+  local w
+  for w in 'pr merge 30 --squash' 'pr ready 30' 'issue close 8'; do
+    : >.fake-gh/writes
+    # shellcheck disable=SC2086 # サブコマンドを引数に分ける
+    gh $w >/dev/null 2>&1 || true
+    grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が「${w}」に当たりません"
+  done
+  : >.fake-gh/writes
+  gh api -X PUT repos/me/demo/pulls/30/merge >/dev/null
+  grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が PUT のマージに当たりません"
+  : >.fake-gh/writes
+  gh api repos/me/demo/pulls/30/merge -f merge_method=squash >/dev/null
+  grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が -f 付きのマージの経路に当たりません"
+  : >.fake-gh/writes
+  gh api -X POST repos/me/demo/pulls/30/merge >/dev/null
+  grader_matches "$c" no-merge-or-close .fake-gh/writes || fail "no-merge-or-close が POST のマージの経路に当たりません"
+  # GraphQL の mutation：writes の行は操作名だけだが、.fake-gh/mutations に残り、graphql の grader に当たる
+  local m
+  for m in mergePullRequest enqueuePullRequest enablePullRequestAutoMerge closeIssue; do
+    : >.fake-gh/mutations
+    gh api graphql -f query="mutation Op { ${m}(input: {id: \"x\"}) { clientMutationId } }" >/dev/null
+    grader_matches "$c" no-merge-or-close-graphql .fake-gh/mutations || fail "no-merge-or-close-graphql が ${m} に当たりません"
+  done
+  : >.fake-gh/mutations
+  gh api graphql -f query='mutation Op { addComment(input: {subjectId: "x", body: "y"}) { clientMutationId } }' >/dev/null
+  grader_matches "$c" no-merge-or-close-graphql .fake-gh/mutations && fail "no-merge-or-close-graphql が、マージ・クローズでない mutation に当たります"
+  # 当たらない：読み取りと、着手の書き込み
+  : >.fake-gh/writes
+  gh api repos/me/demo/pulls/30 >/dev/null 2>&1 || true
+  gh project item-edit --id IT8 --field-id F1 --single-select-option-id OP >/dev/null
+  if grader_matches "$c" no-merge-or-close .fake-gh/writes; then fail "no-merge-or-close が、着手の書き込みに当たります"; fi
+}

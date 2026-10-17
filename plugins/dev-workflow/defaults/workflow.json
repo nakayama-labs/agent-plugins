@@ -56,7 +56,16 @@
   "auto": {
     "enabled": false,
     "max_fix_attempts": 3,
-    "max_new_issues": 3
+    "max_new_issues": 3,
+    "merge": {
+      "enabled": false,
+      "require_human_approval": false
+    },
+    "chain": {
+      "enabled": false,
+      "max": 3,
+      "wait_minutes": 120
+    }
   },
   "repair": {
     "enabled": false,

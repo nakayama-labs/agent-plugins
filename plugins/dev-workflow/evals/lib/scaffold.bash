@@ -61,6 +61,7 @@ fake_gh_init() {
   : >.fake-gh/routes
   : >.fake-gh/calls
   : >.fake-gh/writes
+  : >.fake-gh/mutations
 }
 
 # 偽の gh の応答を、表の最後に足す（先に足したものが優先される）。fake_gh_read は読むだけの呼び出し、fake_gh_write は

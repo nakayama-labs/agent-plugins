@@ -11,6 +11,7 @@
 
 - Issue をやめることにしたとき（重複・不要・誤って起票した）は、取りやめます（`/dev-workflow:task-cancel`）。マージした後の片付けには使いません。取りやめを実際に行い、かつ、この会話で、その Issue の task-start や実装・レビュー・PR の作業をしていたときだけ、次のタスクに着手する前に `/clear` するよう勧めます（会話にそれが無いときや、取りやめなかったときは勧めません）。
 - Issue を、確認なしで PR まで自動で進めるよう頼まれたときは、`/dev-workflow:task-auto` を使います。設定 `auto.enabled` で有効にしたリポジトリでだけ動き、上の流れの確認に代わりに答えて進めます（無効なら何もしません。上の流れで進めるかは、使う人が決めます）。決めきれないときは、理由を Issue にコメントして保留の列に移して止まります。
+- マージされた PR の後片付けから、次の Issue を `task-auto` で PR まで進めるまでを確認なしで続けるよう頼まれたときは、`/dev-workflow:task-auto-sequence` を使います。設定 `auto.enabled`・`auto.merge.enabled`・`auto.chain.enabled` をすべて有効にしたリポジトリでだけ動き、件数の上限（`auto.chain.max`）と止める手段（設定を false にする・PR のラベル `no-auto-merge`）で止まります。ラベル `no-auto-merge` は、まだ既定のラベル（`labels.json`）に無いので、使うなら自分で作ります（作るまでの止める手段は、設定を false にする方法だけです）。
 - 次にどの Issue に着手するか、同時に進められるものはあるかを知りたいときは、`/dev-workflow:task-next` を使います（読むだけで、何も変えません）。
 - Issue を任意の列（Blocked など）へ移すときは、`/dev-workflow:task-status` を使います。
 - 質問への回答や調査だけで、ファイルを変えない依頼には、この流れ（番号の付いた段階）は要りません。
