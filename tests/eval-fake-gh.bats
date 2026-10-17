@@ -292,3 +292,27 @@ mutation { x }'
   assert_success
   [ ! -e .fake-gh/pr-body ] || fail "前の本文が残っています: $(cat .fake-gh/pr-body)"
 }
+
+@test "gh issue comment の本文（--body-file の - かファイル）を、writes の行の最後に1行にして添える。--body は引数として行に入る" {
+  fake_gh_write 'issue comment*' ''
+  printf '1行目\n2行目 chain=c1 issue=8\n' | "${TEST_BASH:-bash}" "$FAKE_GH" issue comment 5 --body-file - >/dev/null
+  printf '本文のファイル\n' >"$TMP/c.md"
+  run_fake_gh issue comment 6 --body-file "$TMP/c.md"
+  assert_success
+  run_fake_gh issue comment 7 --body "引数の本文"
+  assert_success
+  assert_equal "$(writes)" "$(printf '%s\n' 'issue comment 5 --body-file - body: 1行目 2行目 chain=c1 issue=8' "issue comment 6 --body-file ${TMP}/c.md body: 本文のファイル" 'issue comment 7 --body 引数の本文')"
+}
+
+@test "GraphQL の mutation のクエリを .fake-gh/mutations に残し、writes の行は変えない。mutation でないクエリは残さない" {
+  fake_gh_read 'api graphql Read' '{}'
+  run_fake_gh api graphql -f query='mutation Merge { mergePullRequest(input: {pullRequestId: "x"}) { clientMutationId } }'
+  assert_success
+  run_fake_gh api graphql -f query='query Read { viewer { login } }'
+  assert_success
+  assert_equal "$(writes)" "api graphql Merge {}"
+  run grep -c 'mergePullRequest' .fake-gh/mutations
+  assert_output 1
+  run grep -c 'viewer' .fake-gh/mutations
+  assert_output 0
+}
