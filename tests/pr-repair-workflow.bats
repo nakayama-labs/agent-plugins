@@ -24,7 +24,7 @@ step_of() {
 
 @test "起動は定期の見回りだけで、PR の変更後のワークフローで動くイベントでは起動しない（秘密情報を持ち出されないため）" {
   grep -qE '^  schedule:' "$WF"
-  ! grep -qE '^  (pull_request|pull_request_target|pull_request_review|pull_request_review_comment|issue_comment|workflow_run):' "$WF"
+  ! grep -qE '^  (pull_request|pull_request_target|pull_request_review|pull_request_review_comment|issue_comment|workflow_run):' "$WF" || fail "PR の変更後のワークフローで動くイベントで起動しています"
 }
 
 @test "GITHUB_TOKEN には権限を与えない（書き込みは App のトークンで行う）" {
