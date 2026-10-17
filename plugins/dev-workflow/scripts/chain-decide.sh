@@ -17,11 +17,18 @@
 #   pr_state          直前の Issue の PR の状態。MERGED・OPEN・CLOSED（既定 OPEN）
 #   no_auto_merge     その PR にラベル no-auto-merge が付いているか（既定 false）
 #   waited_minutes    PR を出して task-auto が終わった時刻から、今までの分（0 以上の整数。既定 0）
-#   next              task-next の先頭の Issue の番号（親・待ち・保留は除く。無ければ null）
+#   next_decided      次の Issue を調べ終えたか（next-tasks.sh を実行したか。既定 false）。調べていない（false）で next が無いときと、
+#                     調べたが無い（true）で next が無いときを見分ける。調べ終えた no_next は確定で、調べ直さない
+#   next              task-next の先頭の Issue の番号（親・待ち・保留は除く。無ければ null。番号があれば調べ終えたものとして扱う）
 #   next_action       その Issue への auto-check.sh の action（proceed のときだけ進める）
 #
-# 出力（JSON）: {action, reason}
-#   action  next（次の Issue へ進む）・wait（PR がまだマージされていない。待つ）・stop（連鎖を終える。止まった理由を伝える）
+# 出力（JSON）: {action, reason, cleanup}
+#   action  next（次の Issue へ進む）・wait（PR がまだマージされていない。待つ）・stop（連鎖を終える。止まった理由を伝える）・
+#           check_next（次の Issue をまだ調べていない。next-tasks.sh と auto-check.sh で調べ、next_decided を true にして、もう一度判定する）
+#   cleanup  マージされた PR の後片付け（task-finish の手順）をするか。pr_state が MERGED で、reason が chain_disabled・auto_disabled・
+#            merge_disabled（連鎖が無効なので何も変えない）のどれでもないときだけ true。stop でも true になる
+#            （limit・no_next・no_auto_merge・record_unreadable などで止まるときも、マージ済みの PR の後片付けはする）。
+#            OPEN・CLOSED（wait・pr_closed など）は false
 #
 # 判断の表（上から順に当てはめる）
 #   1. chain_enabled が true でない                       → stop（chain_disabled）
@@ -33,9 +40,11 @@
 #   7. pr_state が OPEN で waited_minutes ≥ wait_minutes  → stop（wait_timeout）
 #   8. pr_state が OPEN                                   → wait（pr_open。次の機会に判定し直す）
 #   9. count が max 以上                                  → stop（limit）
-#  10. next が無い                                        → stop（no_next）
-#  11. next_action が proceed でない                      → stop（next_not_startable）
-#  12. 上のどれでもない                                   → next（ready）
+#  10. next が無く、next_decided が true でない           → check_next（next_not_checked）
+#  11. next が無い                                        → stop（no_next。調べ終えた結果なので確定）
+#  12. next_action が proceed でない                      → stop（next_not_startable）
+#  13. 上のどれでもない                                   → next（ready）
+#   cleanup は、表で決まった reason から、上の説明のとおりに付ける（5 の no_auto_merge は、MERGED なら true・OPEN なら false）
 #   pr_state が MERGED・OPEN・CLOSED 以外の値、max・wait_minutes・count・waited_minutes が整数でない・範囲外のときは、終了コード 64 で止まる
 set -euo pipefail
 
@@ -62,7 +71,7 @@ jq -e '
   def int($min): . == null or (type == "number" and . >= $min and . == floor);
   type == "object"
   and (.chain_enabled | bool) and (.auto_enabled | bool) and (.merge_enabled | bool)
-  and (.record_readable | bool) and (.no_auto_merge | bool)
+  and (.record_readable | bool) and (.no_auto_merge | bool) and (.next_decided | bool)
   and (.max | int(1)) and (.wait_minutes | int(1)) and (.count | int(0)) and (.waited_minutes | int(0))
   and (.pr_state == null or (.pr_state | IN("MERGED", "OPEN", "CLOSED")))
   and (.next == null or ((.next | type) == "number" and .next >= 1 and .next == (.next | floor)))
@@ -72,8 +81,9 @@ jq -e '
 # 既定の値は、検証の後に、ここで1か所に置く（false などが既定の値に化けないよう、null かどうかで置く）
 jq -c '
   def r($a; $why): {action: $a, reason: $why};
-  (.max //= 1 | .wait_minutes //= 1 | .waited_minutes //= 0 | .pr_state //= "OPEN" | .count //= .max)
-  | if .chain_enabled != true then r("stop"; "chain_disabled")
+  (.max //= 1 | .wait_minutes //= 1 | .waited_minutes //= 0 | .pr_state //= "OPEN" | .count //= .max) as $in
+  | $in
+  | (if .chain_enabled != true then r("stop"; "chain_disabled")
   elif .auto_enabled != true then r("stop"; "auto_disabled")
   elif .merge_enabled != true then r("stop"; "merge_disabled")
   elif .record_readable != true then r("stop"; "record_unreadable")
@@ -82,6 +92,8 @@ jq -c '
   elif .pr_state == "OPEN" and .waited_minutes >= .wait_minutes then r("stop"; "wait_timeout")
   elif .pr_state == "OPEN" then r("wait"; "pr_open")
   elif .count >= .max then r("stop"; "limit")
+  elif .next == null and .next_decided != true then r("check_next"; "next_not_checked")
   elif .next == null then r("stop"; "no_next")
   elif .next_action != "proceed" then r("stop"; "next_not_startable")
-  else r("next"; "ready") end' <<<"$input"
+  else r("next"; "ready") end)
+  | . + {cleanup: ($in.pr_state == "MERGED" and (.reason | IN("chain_disabled", "auto_disabled", "merge_disabled") | not))}' <<<"$input"

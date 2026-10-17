@@ -17,6 +17,8 @@ rec() { printf '<!-- dev-workflow:task-auto-sequence chain=c1 issue=%s -->\n連�
 
 setup_chain() {
   setup_fake_gh
+  # 足す Issue #20（Issue として読める）
+  jq '.number = 20 | .url = "https://github.com/me/demo/issues/20"' "$FIX/issue-17.json" >"$FIX/issue-20.json"
 }
 
 @test "記録が無ければ、件数は 0 で、コメントしない（読むだけ）" {
@@ -107,4 +109,34 @@ setup_chain() {
   run_script chain-record.sh --first 17 --chain-id 'c-->'
   assert_failure 64
   assert_equal "$(called issue-view)" 0
+}
+
+@test "--first が PR の番号なら、終了コード 2 で止まり、コメントしない" {
+  setup_chain
+  echo '{"url": "https://github.com/me/demo/pull/21", "number": 21, "comments": []}' >"$FIX/issue-21.json"
+  run_script chain-record.sh --first 21 --chain-id c1 --add 21
+  assert_failure 2
+  assert_output --partial "最初の Issue #21 は PR です"
+  assert_equal "$(called issue-comment)" 0
+}
+
+@test "--first が無い番号なら、終了コード 2 で止まり、コメントしない" {
+  setup_chain
+  run_script chain-record.sh --first 99 --chain-id c1 --add 99
+  assert_failure 2
+  assert_output --partial "最初の Issue #99 が"
+  assert_equal "$(called issue-comment)" 0
+}
+
+@test "--add が PR の番号・無い番号なら、コメントする前に終了コード 2 で止まる（記録に Issue でない番号を入れない）" {
+  setup_chain
+  set_comments "$(rec 17)"
+  echo '{"url": "https://github.com/me/demo/pull/21", "number": 21, "comments": []}' >"$FIX/issue-21.json"
+  run_script chain-record.sh --first 17 --chain-id c1 --add 21
+  assert_failure 2
+  assert_output --partial "足す Issue #21 は PR です"
+  run_script chain-record.sh --first 17 --chain-id c1 --add 99
+  assert_failure 2
+  assert_output --partial "足す Issue #99 が"
+  assert_equal "$(called issue-comment)" 0
 }

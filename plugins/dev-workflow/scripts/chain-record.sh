@@ -12,8 +12,9 @@
 #   --add M         この Issue を進めた分として記録する（#M でもよい）。連鎖を始めるときは、最初の Issue を足す。省略すると読むだけ
 #   --dry-run       コメントせず、行う予定の操作を出力する
 #
-# 止まるとき: --first・--chain-id が無い・--chain-id に使えない文字がある（終了コード 64）、PR の番号・無い番号（2）、
-#             最初の Issue を読めない・コメントできない（1。連鎖は終える）
+# 止まるとき: --first・--chain-id が無い・--chain-id に使えない文字がある（終了コード 64）、--first・--add が PR の番号・
+#             無い番号（2。--add の Issue は、足す前に読んで確かめる。何もコメントしない）、
+#             最初の Issue を読めない・--add の Issue を読めない・コメントできない（1。連鎖は終える）
 #
 # 出力: {first, chain_id, issues（記録にある Issue の番号の配列。--add の分を含む。--dry-run では足す予定の分も含む）,
 #        count（issues の数）, recorded（今回コメントしたか。dry-run ではする予定か）, dry_run}
@@ -49,6 +50,10 @@ case "$chain_id" in *[!A-Za-z0-9._-]*) dw_die "--chain-id には英数字と . _
 
 # PR の番号なら止まる（dw_read_issue）
 found="$(dw_read_issue "$first" number,comments "最初の Issue")"
+# 足す Issue が PR の番号・無い番号なら、コメントする前に止まる（記録に Issue でない番号が入らないように）
+if [ -n "$add" ] && [ "$add" != "$first" ]; then
+  dw_read_issue "$add" number "足す Issue" >/dev/null
+fi
 # コメントの先頭が印のものだけを数える（本文の途中に印を引用しただけのコメントは数えない）。番号は重複を1件にして、小さい順に並べる
 issues="$(jq -c --arg id "$chain_id" '
   [.comments[]?.body
