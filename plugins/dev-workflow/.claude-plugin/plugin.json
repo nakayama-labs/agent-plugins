@@ -1,6 +1,6 @@
 {
   "name": "dev-workflow",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Issue 起票から PR マージ後の後片付けまでを GitHub Projects と連携して進めるスキル群",
   "author": {
     "name": "AtsutoNakayama"
