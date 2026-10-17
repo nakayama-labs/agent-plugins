@@ -308,6 +308,7 @@ has() {
   [[ "$desc" == *"マージできるまで待って"* ]] || fail "gh-pr-check の description に「マージできるまで待って」がありません"
   grep -q 'pr-watch-loop.sh' "$f" || fail "gh-pr-check に、見回りのループ（pr-watch-loop.sh）が書かれていません"
   grep -q 'run_in_background' "$f" || fail "gh-pr-check に、ループを背景で実行することが書かれていません"
+  # shellcheck disable=SC2016 # バッククォートは SKILL.md の文字としてそのまま探す
   for k in '`idle`：止まって報告' '`act`：止まって、対応するかを聞く' '`conflict`：止まって' 'branch-update' '`stop`：止まって' 'same_failure' 'push_limit' '`limit`' '何も書き込まない' '既定 60 秒' '既定 60 分'; do
     grep -qF -- "$k" "$f" || fail "gh-pr-check の見回りに「$k」が書かれていません"
   done
