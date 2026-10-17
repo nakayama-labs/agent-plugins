@@ -7,7 +7,7 @@
 #   --pr N   PR の番号（#N でもよい）。省略すると今のブランチの PR
 #
 # 出力（JSON）:
-#   pr        number・url・state・draft・head_sha
+#   pr        number・url・state・draft・head_sha・merge_state（GitHub の mergeStateStatus。CLEAN ならマージできる）
 #   action    idle（何もしない）・wait（待つ）・act（対応する）・conflict（コンフリクトを直す）・stop（上限に達したので止まる）のどれか
 #   reasons   action の理由（文字列の配列。下の表）
 #   respond   gh-pr-check の手順1が、指摘・質問・CI の失敗の一覧（手順2以降）へ進むか（true）、何も変えずに終えるか（false）。
@@ -255,7 +255,7 @@ printf '%s\n' "$fb" "$res" | jq -s --argjson mq "$mq" --arg idle_reason "$idle_r
                                    ($waiting_for[] | "awaiting_review:" + .),
                                    if $p.mergeable == "UNKNOWN" then "mergeable_unknown" else empty end] + $notes)}
      else {action: "idle", reasons: (["nothing_to_do"] + $notes)} end) as $d
-  | {pr: {number: $p.number, url: $p.url, state: $p.state, draft: $p.draft, head_sha: $p.head_sha},
+  | {pr: {number: $p.number, url: $p.url, state: $p.state, draft: $p.draft, head_sha: $p.head_sha, merge_state: $p.merge_state},
      action: $d.action, reasons: $d.reasons,
      respond: ($p.state == "OPEN" and ($f.checks.state == "failure" or $n_threads > 0 or $n_reviews > 0 or $n_comments > 0 or $n_awaiting > 0)),
      details: {failed_checks: [$f.checks.failed[].name],

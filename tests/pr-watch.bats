@@ -698,3 +698,24 @@ run_marker() { printf '<!-- dev-workflow:repair-run head=%s --> 実行ログ' "$
   assert_output --partial "same_failure"
   assert_output --partial "push_limit"
 }
+
+@test "表: pr に merge_state が出る（gh-pr-check の見回りが、マージできるかを言うため）" {
+  setup_fake_gh
+  pr_view '{mergeStateStatus: "BLOCKED"}'
+  run_script pr-watch.sh --pr 5
+  assert_success
+  assert_equal "$(jq -r .pr.merge_state <<<"$output")" BLOCKED
+  pr_view '{}'
+  run_script pr-watch.sh --pr 5
+  assert_equal "$(jq -r .pr.merge_state <<<"$output")" CLEAN
+}
+
+@test "repair.* の型が正しくなければ、repair を含むメッセージで止まる" {
+  setup_fake_gh
+  for c in '{"enabled": "yes"}' '{"max_fix_attempts": "3"}' '{"reply_logins": "app"}'; do
+    repair_cfg "$c"
+    run_script pr-watch.sh --pr 5
+    assert_failure
+    assert_output --partial "repair"
+  done
+}
