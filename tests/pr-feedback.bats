@@ -317,6 +317,8 @@ out_of() { jq -c "$1" <<<"$output"; }
     '[{"author":"alice","t":[[100,true,2]]},{"author":"bob","t":[[100,false,2]]}]'
   assert_equal "$(out_of '.feedback[0].threads[0] | [.path, .line, .outdated, .url, .comments[0].author, .comments[0].body]')" \
     '["a.sh",3,false,"https://github.com/me/demo/pull/5#discussion_r100","alice","ここは null になりませんか"]'
+  # スレッドの各コメントに、入力のコメントの ID（databaseId）が残る（返信のマーカーの to と照らすため。#340）
+  assert_equal "$(out_of '[.feedback[] | .threads[].comments[].id]')" '[100,101,100,101]'
   assert_equal "$(out_of .counts.threads)" 2
 }
 

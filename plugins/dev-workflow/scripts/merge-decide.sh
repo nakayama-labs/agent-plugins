@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 無人でマージキューに入れてよいかを、値だけから判断の表で決めて JSON で出力する（ADR 000411・000412）。
 # 判断は入力の値だけで決める（git も GitHub も使わない）。組み合わせは tests/merge-decide.bats で確かめる。
-# repair-next.sh と同じ作りで、pr-watch.sh（見回りの idle・wait・act・conflict の分類）には足さず、別のスクリプトにしてある。
+# repair-next.sh と同じ作りで、pr-watch.sh（見回りの idle・wait・act・conflict・stop の分類）には足さず、別のスクリプトにしてある。
 #
 # 使い方: echo '<入力 JSON>' | merge-decide.sh
 #
