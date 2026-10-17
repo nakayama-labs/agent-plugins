@@ -277,3 +277,26 @@ SH
   run_sel
   assert_failure
 }
+
+@test "同じ投稿者の権限は、同じ実行の中で1回しか読まない（結果を覚える）。大文字小文字だけ違う綴りも同じ" {
+  pull 1; pull 2
+  watch 1 act '["unanswered_comments"]'; watch 2 act '["unanswered_comments"]'
+  fb 1 Maintainer 1; fb 2 maintainer 1
+  echo '{"role_name": "write"}' >"$FIX/perm-Maintainer.json"
+  echo '{"role_name": "write"}' >"$FIX/perm-maintainer.json"
+  run_sel
+  assert_success
+  [ "$(jq -c '[.[].pr]' <<<"$output")" = '[1,2]' ]
+  [ "$(grep -c '/permission' "$CALLS")" = 1 ]
+}
+
+@test "権限なしの結果も覚える。失敗は覚えず、失敗で止まる" {
+  pull 1; pull 2
+  watch 1 act '["unanswered_comments"]'; watch 2 act '["unanswered_comments"]'
+  fb 1 reader 1; fb 2 reader 1
+  echo '{"role_name": "read"}' >"$FIX/perm-reader.json"
+  run_sel
+  assert_success
+  assert_output '[]'
+  [ "$(grep -c '/permission' "$CALLS")" = 1 ]
+}

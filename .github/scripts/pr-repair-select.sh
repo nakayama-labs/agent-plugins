@@ -67,10 +67,21 @@ done
 
 # 指摘に対応してよい投稿者か。判断は repair-author.sh（設定 repair.allowed_authors・write 以上の権限）に任せる。
 # 権限を読めないとき（404 以外の失敗）は、権限なしと取り違えず、ここも失敗にする（set -e で止まる）
+# 結果はログインごとに覚えて、同じ実行の中で同じログインに repair-author.sh（権限の API）を何度も呼ばない。
+# 失敗は覚えない（exit 1 で止まる）。連想配列は bash 3.2 に無いので、「<小文字のログイン名> <allow|deny>」の行の文字列で持つ
+allow_cache=""
 is_allowed() {
-  local out
+  local key out action line
+  key="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  line="$(printf '%s' "$allow_cache" | grep -F -x -e "${key} allow" -e "${key} deny" || true)"
+  if [ -n "$line" ]; then
+    [ "${line##* }" = allow ]
+    return
+  fi
   out="$("$SCRIPTS_DIR/repair-author.sh" --login "$1" --repo "$GITHUB_REPOSITORY")" || exit 1
-  [ "$(jq -r .action <<<"$out")" = allow ]
+  action="$(jq -r .action <<<"$out")"
+  allow_cache="${allow_cache}${key} ${action}"$'\n'
+  [ "$action" = allow ]
 }
 
 if [ -n "$sender" ]; then
