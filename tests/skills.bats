@@ -503,6 +503,25 @@ has() {
 }
 
 # shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
+@test "gh-pr-check は、無人で対応するとき、確認を指示役の判断に置き換え、許可した投稿者の指摘と CI の失敗だけを直し、決められなければ Issue にコメントして保留の列に移して止まる（ADR 000285）" {
+  f="$SKILLS/gh-pr-check/SKILL.md"
+  un="$(section "$f" "## 無人で対応するとき")"
+  has "「## 無人で対応するとき」の節" "$un" 'AskUserQuestion は使わない' '強制 push をしない' '--force-with-lease' 'マージはしない' 'キューに入れ直さない' \
+    '信用できない入力' '`repair.allowed_authors`' 'write 以上' 'collaborators/<ログイン名>/permission' '許可していない投稿者' '返信もせず' \
+    '`pr-watch.sh`' '`action` が `act` でなければ' 'repair-push-check.sh --base-branch' '<!-- dev-workflow:repair-run head=<head の sha> -->' \
+    '<!-- dev-workflow:repair-reply to=<返信先のコメントの ID> -->' '通常の `git push origin' '`checks_unconfirmed`' '`repair.max_fix_attempts`'
+  # 直さない指摘は理由を返信し、スレッドは開いたままにする。resolved にする操作は呼ばない
+  has "直さない指摘" "$un" '直さない指摘は、理由を返信し、スレッドは開いたままにする' '`resolveReviewThread` を呼ばない'
+  has "止まる" "$(sed -n '/^### 止まる$/,$p' <<<"$un")" 'auto-hold.sh --issue <PR が閉じる Issue の番号> --run-id <指示役が渡した実行の id> --reason-file <ファイル> --repair-reason <理由の種類>' \
+    '`same_failure`' '`forbidden_paths`' '`checks_unconfirmed`' '`other`' '本文には、理由の種類のマーカーを書かない'
+  # 手順の途中で、ユーザーに選んでもらう・承認を得る場面は、無人では使わない
+  has "決まり" "$un" '手順4' '手順6' '指示役の判断に置き換える'
+  frontmatter "$f" | grep -q '無人で対応する' || fail "gh-pr-check の description に、無人で対応する使い方がありません"
+  # プラグインの文にボットの名前を出さない（tests/no-bot-names.bats）。許可した投稿者は設定と権限で決める
+  [ -x "$BATS_TEST_DIRNAME/../plugins/dev-workflow/scripts/auto-hold.sh" ] || fail "auto-hold.sh が実行できません"
+}
+
+# shellcheck disable=SC2016 # バッククォートはスキルの本文の文字で、展開させない
 @test "branch-update は、push しなかったどの出口でも、push・CI・キューへの入れ直しの案内をせず、止めた理由と手元に残ったものを伝える" {
   # push しなかった出口でも、手順6が push・CI・キューへの入れ直しの案内を伝えていた（#242）
   f="$SKILLS/branch-update/SKILL.md"
