@@ -47,6 +47,8 @@ plugins/dev-workflow/scripts/doctor.sh
 | `/dev-workflow:task-auto-sequence` | マージされた PR の後片付けを確認なしで行い、Todo の先頭の Issue（親・待ち・保留は除く）を `task-auto` で PR まで進める（連鎖。下記の「マージの後に次の Issue へ進める」）。件数の上限と止める手段で止まります。設定 `auto.enabled`・`auto.merge.enabled`・`auto.chain.enabled` をすべて有効にしたリポジトリでだけ動きます |
 | `/dev-workflow:task-cancel` | やらないことにした Issue や誤って起票した Issue を取りやめる。理由と参照先（代わりに作業する Issue など）をコメントに書き、not planned（重複なら元の Issue に紐付けて duplicate）で閉じる。着手していれば、PR を閉じ、リモートと手元のブランチ・ワークツリーも削除する。失う作業（マージしていないコミット・未コミットの変更・`.env` など）を見せて確認してから行う。親の Issue（サブ Issue を持つ Issue）を取りやめるときは、開いている子孫（子・孫）を一緒に取りやめるか、残すかを確認で選ぶ（一緒に取りやめるなら、着手中の子孫の PR とブランチも片付ける）。Project からは外さず、Story Point も残す（後からボードで経緯を参照できるように）。取りやめた後、子がすべて閉じた親（とさらに上の親）があれば、親を閉じるかを確認する（子がすべて取りやめなら not planned で閉じる案）。マージした後の片付けは `task-finish` を使う。取りやめを実際に行ったら（この会話でそのタスクを進めていたとき）、次のタスクに着手する前に `/clear` するよう勧める（実行はしない） |
 
+`task-auto-sequence` は、Issue でなく、マージされた PR の番号を取ります（`/dev-workflow:task-auto-sequence 30`）。番号が無ければ、聞かずに、番号を付けて頼み直すよう伝えて終えます。
+
 Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`・`task-cancel`・`task-auto`）は、`/dev-workflow:task-start 12` や `/dev-workflow:task-start #12` のように、引数で番号を渡せます。`task-status` は `/dev-workflow:task-status 12 Blocked` のように、番号、列名の順に渡します。`task-finish` は、`/dev-workflow:task-finish fix-typo` のように、番号の代わりにブランチ名も渡せます（名前に Issue の番号を含まないブランチを片付けるとき）。引数が無ければ、依頼の文章から読み取ります。`gh-pr-check` は `/dev-workflow:gh-pr-check 42` のように PR の番号を渡せます（無ければ今のブランチの PR）。
 
 `gh-pr-check` は、投稿者ごとに担当の skill を、設定（`.claude/dev-workflow/config.json`）の `pr_check.handlers` で指定できます。担当の skill がある投稿者の指摘は、その skill に任せます（PR の番号を引数にして呼びます）。設定が無ければ、すべて汎用の手順で扱います。投稿者の名前は、大文字と小文字、末尾の `[bot]` を区別しません。
@@ -167,7 +169,7 @@ Issue の番号を取るスキル（`task-start`・`task-status`・`task-finish`
 - `chain.max`：1回の連鎖で進める Issue の数の上限です（既定 3。最初の Issue も数えます）。進めた Issue は、連鎖の最初の Issue のコメント（印 `<!-- dev-workflow:task-auto-sequence chain=<id> issue=<番号> -->`）に1件ずつ残り、次の実行はそこから数えます。読めない・足せないときは、進めずに終わります
 - `chain.wait_minutes`：PR がマージされるのを待つ時間の上限です（既定 120 分。PR の作成時刻から数えます）。過ぎたら連鎖を終えます
 - `merge.require_human_approval`：無人のマージの条件に、人の approve を加えるかです（既定 false）。無人のマージの判定は `merge-decide.sh` にあります
-- 止める手段は2つです。設定 `auto.chain.enabled`（か `auto.merge.enabled`）を false にするか、進行中の PR にラベル `no-auto-merge` を付けます。付いている PR があると、次の Issue へ進みません
+- 止める手段は2つです。設定 `auto.chain.enabled`（か `auto.merge.enabled`）を false にするか、進行中の PR にラベル `no-auto-merge` を付けます。付いている PR があると、次の Issue へ進みません。ラベル `no-auto-merge` は、まだプラグインの `labels.json` に無いので、使うなら自分で作ります（`gh label create no-auto-merge`）。後続の Issue で `labels.json` に足すまで、作るまでの止める手段は、設定を false にする方法だけです
 - 上限に達したとき・PR がマージされずに閉じたとき・`task-auto` が止まったとき（理由を Issue にコメントして保留の列に移します）・後片付けが止まったときは、次の Issue へ進まずに、連鎖の id・進めた Issue・止まった理由を伝えて止まります。止まった理由は直前の PR にもコメントします。自動では再開しないので、原因を直してから、手で起動し直します
 
 GitHub Actions から動かすこともできます。このリポジトリでは、Issue にラベル `auto` を付けると `.github/workflows/task-auto.yml` が task-auto を実行し、PR を作ります（ラベルを付けた人が write 以上のときだけ動きます）。push と PR の作成に GitHub App のトークンを使うなど、設定の手順は [CONTRIBUTING.md](CONTRIBUTING.md) の「Issue から自動で PR を作る」にあります。ワークフローのひな形は、プラグインの `templates` にはまだ置いていません。App やシークレットの前提があり、実際に動かして確かめる前に形を固定しないためです。確かめた後に、別の Issue で切り出します。
